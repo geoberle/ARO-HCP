@@ -11,8 +11,8 @@ param disableLocalAuth = false
 param deployFrontendCosmos = false
 param deployMaestroInfra = false
 param maestroNamespace = 'maestro'
-param deployCsInfra = false
-param csNamespace = 'cs'
+param deployCsInfra = true
+param csNamespace = 'cluster-service'
 param workloadIdentities = items({
   frontend_wi: {
     uamiName: 'frontend'
@@ -25,12 +25,11 @@ param workloadIdentities = items({
     serviceAccountName: 'maestro'
   }
   cs_wi: {
-    uamiName: 'cs'
+    uamiName: 'cluster-service'
     namespace: csNamespace
-    serviceAccountName: 'cs'
+    serviceAccountName: 'cluster-service'
   }
 })
 // This parameter is always overriden in the Makefile
 param currentUserId = ''
-param currentUserPrincipal = ''
 param maestroInfraResourceGroup = ''
