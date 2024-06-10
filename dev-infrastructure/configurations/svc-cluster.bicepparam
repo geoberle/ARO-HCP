@@ -11,7 +11,7 @@ param disableLocalAuth = false
 param deployFrontendCosmos = false
 param deployMaestroInfra = false
 param maestroNamespace = 'maestro'
-param deployCsInfra = true
+param deployCsInfra = false
 param csNamespace = 'cluster-service'
 param workloadIdentities = items({
   frontend_wi: {
