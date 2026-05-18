@@ -5,6 +5,7 @@ use (
 	./admin/server
 	./backend
 	./dev-infrastructure/scripts/cleanup-pko-resources
+	./fleet
 	./frontend
 	./internal
 	./kube-applier

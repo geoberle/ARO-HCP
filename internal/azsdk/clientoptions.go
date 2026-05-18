@@ -29,6 +29,7 @@ const (
 	ComponentFrontend        Component = "frontend"
 	ComponentBackend         Component = "backend"
 	ComponentAdmin           Component = "admin"
+	ComponentFleet           Component = "fleet"
 	ComponentResourceCleaner Component = "resource-cleaner"
 	ComponentMgmtAgent       Component = "mgmt-agent"
 	ComponentE2E             Component = "e2e"
