@@ -257,6 +257,10 @@ fleet:
     digest: ""
     registry: arohcpsvcdev.azurecr.io
     repository: fleet
+  k8s:
+    namespace: fleet
+    serviceAccountName: fleet
+  managedIdentityName: fleet
 frontend:
   audit:
     connectSocket: false

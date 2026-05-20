@@ -1,0 +1,13 @@
+---
+# Source: fleet/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/name: fleet
+  annotations:
+    azure.workload.identity/client-id: '__fleetMsiClientId__'
+    azure.workload.identity/tenant-id: '__tenantId__'
+  name: fleet
+  namespace: fleet
+

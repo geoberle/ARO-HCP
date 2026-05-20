@@ -1,0 +1,4 @@
+serviceAccount:
+  name: "{{ .fleet.k8s.serviceAccountName }}"
+  workloadIdentityClientId: "__fleetMsiClientId__"
+  workloadIdentityTenantId: "__tenantId__"

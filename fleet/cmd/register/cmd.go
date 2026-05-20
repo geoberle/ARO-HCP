@@ -15,30 +15,170 @@
 package register
 
 import (
+	"context"
+	"fmt"
+	"time"
+
 	"github.com/spf13/cobra"
 
-	"github.com/Azure/ARO-HCP/fleet/cmd/register/managementcluster"
-	"github.com/Azure/ARO-HCP/fleet/cmd/register/stamp"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/Azure/ARO-HCP/internal/api"
+	"github.com/Azure/ARO-HCP/internal/api/fleet"
+	"github.com/Azure/ARO-HCP/internal/database"
+	"github.com/Azure/ARO-HCP/internal/utils"
 )
 
 func NewRegisterCommand() (*cobra.Command, error) {
+	opts := DefaultRegisterOptions()
 	cmd := &cobra.Command{
 		Use:   "register",
-		Short: "Register fleet resources in CosmosDB",
+		Short: "Register a stamp and management cluster in CosmosDB",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return run(cmd.Context(), opts)
+		},
 	}
-
-	subcommands := []func() (*cobra.Command, error){
-		stamp.NewStampCommand,
-		managementcluster.NewManagementClusterCommand,
+	if err := BindRegisterOptions(opts, cmd); err != nil {
+		return nil, err
 	}
-
-	for _, newCmd := range subcommands {
-		subCmd, err := newCmd()
-		if err != nil {
-			return nil, err
-		}
-		cmd.AddCommand(subCmd)
-	}
-
 	return cmd, nil
+}
+
+func run(ctx context.Context, rawOpts *RawRegisterOptions) error {
+	validated, err := rawOpts.Validate(ctx)
+	if err != nil {
+		return err
+	}
+	completed, err := validated.Complete(ctx)
+	if err != nil {
+		return err
+	}
+	return completed.Run(ctx)
+}
+
+func (o *RegisterOptions) Run(ctx context.Context) error {
+	if err := o.registerStamp(ctx); err != nil {
+		return fmt.Errorf("stamp registration failed: %w", err)
+	}
+
+	if err := o.registerManagementCluster(ctx); err != nil {
+		return fmt.Errorf("management cluster registration failed: %w", err)
+	}
+
+	return nil
+}
+
+func (o *RegisterOptions) registerStamp(ctx context.Context) error {
+	logger := utils.LoggerFromContext(ctx)
+	stampsCRUD := o.fleetDBClient.Stamps()
+
+	existing, err := stampsCRUD.Get(ctx, o.stampIdentifier)
+	if err != nil {
+		if !database.IsNotFoundError(err) {
+			return fmt.Errorf("failed to get stamp %q: %w", o.stampIdentifier, err)
+		}
+
+		newStamp := &fleet.Stamp{
+			CosmosMetadata: api.CosmosMetadata{ResourceID: o.stampResourceID},
+			ResourceID:     o.stampResourceID,
+		}
+		o.applyAutoApprove(newStamp)
+
+		logger.Info("Creating stamp", "stampIdentifier", o.stampIdentifier, "autoApprove", o.autoApprove)
+		if _, err := stampsCRUD.Create(ctx, newStamp, nil); err != nil {
+			return fmt.Errorf("failed to create stamp %q: %w", o.stampIdentifier, err)
+		}
+		logger.Info("Stamp created", "stampIdentifier", o.stampIdentifier)
+		return nil
+	}
+
+	updated := &fleet.Stamp{
+		CosmosMetadata: api.CosmosMetadata{ResourceID: o.stampResourceID},
+		ResourceID:     o.stampResourceID,
+		Status: fleet.StampStatus{
+			Conditions: existing.Status.Conditions,
+		},
+	}
+	o.applyAutoApprove(updated)
+
+	logger.Info("Updating existing stamp", "stampIdentifier", o.stampIdentifier, "autoApprove", o.autoApprove)
+	if _, err := stampsCRUD.Replace(ctx, updated, existing, nil); err != nil {
+		return fmt.Errorf("failed to update stamp %q: %w", o.stampIdentifier, err)
+	}
+	logger.Info("Stamp updated", "stampIdentifier", o.stampIdentifier)
+	return nil
+}
+
+func (o *RegisterOptions) applyAutoApprove(stamp *fleet.Stamp) {
+	if !o.autoApprove {
+		return
+	}
+	apimeta.SetStatusCondition(&stamp.Status.Conditions, metav1.Condition{
+		Type:               string(fleet.StampConditionApproved),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(fleet.StampConditionReasonAutoApproved),
+		Message:            "Auto-approved during registration",
+		LastTransitionTime: metav1.NewTime(time.Now()),
+	})
+}
+
+func (o *RegisterOptions) registerManagementCluster(ctx context.Context) error {
+	logger := utils.LoggerFromContext(ctx)
+	stampsCRUD := o.fleetDBClient.Stamps()
+
+	if _, err := stampsCRUD.Get(ctx, o.stampIdentifier); err != nil {
+		if database.IsNotFoundError(err) {
+			return fmt.Errorf("parent stamp %q not found: register the stamp first", o.stampIdentifier)
+		}
+		return fmt.Errorf("failed to verify parent stamp %q: %w", o.stampIdentifier, err)
+	}
+
+	mcCRUD := stampsCRUD.ManagementClusters(o.stampIdentifier)
+
+	existing, err := mcCRUD.Get(ctx, fleet.ManagementClusterResourceName)
+	if err != nil {
+		if !database.IsNotFoundError(err) {
+			return fmt.Errorf("failed to get management cluster for stamp %q: %w", o.stampIdentifier, err)
+		}
+
+		newMC := o.buildManagementCluster()
+		logger.Info("Creating management cluster", "stampIdentifier", o.stampIdentifier)
+		if _, err := mcCRUD.Create(ctx, newMC, nil); err != nil {
+			return fmt.Errorf("failed to create management cluster for stamp %q: %w", o.stampIdentifier, err)
+		}
+		logger.Info("Management cluster created", "stampIdentifier", o.stampIdentifier)
+		return nil
+	}
+
+	updated := o.buildManagementCluster()
+	updated.Status.Conditions = existing.Status.Conditions
+
+	logger.Info("Updating existing management cluster", "stampIdentifier", o.stampIdentifier)
+	if _, err := mcCRUD.Replace(ctx, updated, existing, nil); err != nil {
+		return fmt.Errorf("failed to update management cluster for stamp %q: %w", o.stampIdentifier, err)
+	}
+	logger.Info("Management cluster updated", "stampIdentifier", o.stampIdentifier)
+	return nil
+}
+
+func (o *RegisterOptions) buildManagementCluster() *fleet.ManagementCluster {
+	return &fleet.ManagementCluster{
+		CosmosMetadata: api.CosmosMetadata{ResourceID: o.mcResourceID},
+		ResourceID:     o.mcResourceID,
+		Spec: fleet.ManagementClusterSpec{
+			SchedulingPolicy: o.schedulingPolicy,
+		},
+		Status: fleet.ManagementClusterStatus{
+			AKSResourceID:                                        o.aksResourceID,
+			PublicDNSZoneResourceID:                              o.publicDNSZoneResourceID,
+			HostedClustersSecretsKeyVaultURL:                     o.hostedClustersSecretsKeyVaultURL,
+			HostedClustersManagedIdentitiesKeyVaultURL:           o.hostedClustersManagedIdentitiesKeyVaultURL,
+			HostedClustersSecretsKeyVaultManagedIdentityClientID: o.hostedClustersSecretsKeyVaultManagedIdentityClientID,
+			ClusterServiceProvisionShardID:                       o.provisionShardID,
+			MaestroConsumerName:                                  o.maestroConsumerName,
+			MaestroRESTAPIURL:                                    o.maestroRESTAPIURL,
+			MaestroGRPCTarget:                                    o.maestroGRPCTarget,
+		},
+	}
 }

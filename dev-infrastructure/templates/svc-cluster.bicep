@@ -414,6 +414,15 @@ param adminApiIngressCertName string
 @description('The issuer of the Admin API certificate')
 param adminApiIngressCertIssuer string
 
+@description('The name of the Fleet managed identity')
+param fleetMIName string
+
+@description('The namespace of the Fleet managed identity')
+param fleetNamespace string
+
+@description('The service account name of the Fleet managed identity')
+param fleetServiceAccountName string
+
 @description('The cluster tag value for the owning team')
 param owningTeamTagValue string
 
@@ -517,6 +526,11 @@ var workloadIdentities = items({
     uamiName: exporterMIName
     namespace: exporterNamespace
     serviceAccountName: exporterServiceAccountName
+  }
+  fleet_wi: {
+    uamiName: fleetMIName
+    namespace: fleetNamespace
+    serviceAccountName: fleetServiceAccountName
   }
 })
 
@@ -746,13 +760,14 @@ module dataCollection '../modules/metrics/datacollection.bicep' = {
 var frontendMI = mi.getManagedIdentityByName(managedIdentities.outputs.managedIdentities, frontendMIName)
 var backendMI = mi.getManagedIdentityByName(managedIdentities.outputs.managedIdentities, backendMIName)
 var adminApiMI = mi.getManagedIdentityByName(managedIdentities.outputs.managedIdentities, adminApiMIName)
+var fleetMI = mi.getManagedIdentityByName(managedIdentities.outputs.managedIdentities, fleetMIName)
 
 module rpCosmosDb '../modules/rp-cosmos.bicep' = if (rpCosmosDbAccountId != '') {
   name: 'rp_cosmos_db'
   scope: resourceGroup(regionalResourceGroup)
   params: {
     cosmosDBAccountName: rpCosmosDbName
-    userAssignedMIs: [frontendMI, backendMI, adminApiMI]
+    userAssignedMIs: [frontendMI, backendMI, adminApiMI, fleetMI]
     resourceContainerMaxScale: resourceContainerMaxScale
     billingContainerMaxScale: billingContainerMaxScale
     locksContainerMaxScale: locksContainerMaxScale
