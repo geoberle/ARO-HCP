@@ -12,6 +12,8 @@ FLEET_GENERATED_IMAGE_REPOSITORY = $(shell DEPLOY_ENV=${DEPLOY_ENV} BASELINE_REP
 FLEET_TAGGED_IMAGE ?= $(ARO_HCP_IMAGE_REGISTRY)/$(FLEET_GENERATED_IMAGE_REPOSITORY):$(FLEET_IMAGE_TAG)
 
 BINARY = fleet
+LDFLAGS = -ldflags "\
+	-X github.com/Azure/ARO-HCP/internal/version.CommitSHA=${ARO_HCP_REVISION}"
 FLEET_SOURCES = $(shell find . -name '*.go' -o -name 'go.mod' -o -name 'go.sum')
 
 .DEFAULT_GOAL := build
@@ -20,7 +22,7 @@ build: $(BINARY)
 .PHONY: build
 
 $(BINARY): $(FLEET_SOURCES)
-	go build -o $(BINARY) .
+	go build $(LDFLAGS) -o $(BINARY) .
 
 clean:
 	rm -f $(BINARY)

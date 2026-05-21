@@ -25,7 +25,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
+	"github.com/Azure/ARO-HCP/fleet/cmd/controller"
 	"github.com/Azure/ARO-HCP/fleet/cmd/register"
+	"github.com/Azure/ARO-HCP/internal/version"
 )
 
 func main() {
@@ -48,10 +50,12 @@ func main() {
 			HiddenDefaultCmd: true,
 		},
 	}
+	cmd.Version = version.CommitSHA
 	cmd.PersistentFlags().IntVarP(&logVerbosity, "verbosity", "v", 0, "set the verbosity level")
 
 	subcommands := []func() (*cobra.Command, error){
 		register.NewRegisterCommand,
+		controller.NewControllerCommand,
 	}
 
 	for _, newCmd := range subcommands {

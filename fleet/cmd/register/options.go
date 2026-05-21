@@ -35,6 +35,7 @@ import (
 var provisionShardNamespaceUUID = uuid.MustParse("916f9976-e1c0-4afd-b84c-5d5c94fbeaed")
 
 type RawRegisterOptions struct {
+	CloudEnvironment                                     string
 	CosmosURL                                            string
 	CosmosName                                           string
 	StampIdentifier                                      string
@@ -55,6 +56,7 @@ func DefaultRegisterOptions() *RawRegisterOptions {
 }
 
 func BindRegisterOptions(opts *RawRegisterOptions, cmd *cobra.Command) error {
+	cmd.Flags().StringVar(&opts.CloudEnvironment, "cloud-environment", opts.CloudEnvironment, "Azure cloud environment (AzurePublicCloud, AzureChinaCloud, AzureUSGovernmentCloud)")
 	cmd.Flags().StringVar(&opts.CosmosURL, "cosmos-url", opts.CosmosURL, "CosmosDB endpoint URL")
 	cmd.Flags().StringVar(&opts.CosmosName, "cosmos-name", opts.CosmosName, "CosmosDB database name")
 	cmd.Flags().StringVar(&opts.StampIdentifier, "stamp-identifier", opts.StampIdentifier, "stamp identifier")
@@ -70,6 +72,7 @@ func BindRegisterOptions(opts *RawRegisterOptions, cmd *cobra.Command) error {
 	cmd.Flags().StringVar(&opts.MaestroGRPCTarget, "maestro-grpc-target", opts.MaestroGRPCTarget, "Maestro gRPC dial target (host:port)")
 
 	for _, flag := range []string{
+		"cloud-environment",
 		"cosmos-url",
 		"cosmos-name",
 		"stamp-identifier",
@@ -93,6 +96,7 @@ func BindRegisterOptions(opts *RawRegisterOptions, cmd *cobra.Command) error {
 
 type validatedRegisterOptions struct {
 	*RawRegisterOptions
+	cloudConfiguration      cloud.Configuration
 	stampResourceID         *azcorearm.ResourceID
 	mcResourceID            *azcorearm.ResourceID
 	aksResourceID           *azcorearm.ResourceID
@@ -106,6 +110,11 @@ type ValidatedRegisterOptions struct {
 }
 
 func (o *RawRegisterOptions) Validate(ctx context.Context) (*ValidatedRegisterOptions, error) {
+	cloudConfig, err := azsdk.CloudConfigurationFromName(o.CloudEnvironment)
+	if err != nil {
+		return nil, fmt.Errorf("--cloud-environment: %w", err)
+	}
+
 	stampResourceID, err := fleet.ToStampResourceID(o.StampIdentifier)
 	if err != nil {
 		return nil, fmt.Errorf("invalid stamp identifier %q: %w", o.StampIdentifier, err)
@@ -139,6 +148,7 @@ func (o *RawRegisterOptions) Validate(ctx context.Context) (*ValidatedRegisterOp
 	return &ValidatedRegisterOptions{
 		validatedRegisterOptions: &validatedRegisterOptions{
 			RawRegisterOptions:      o,
+			cloudConfiguration:      cloudConfig,
 			stampResourceID:         stampResourceID,
 			mcResourceID:            mcResourceID,
 			aksResourceID:           aksID,
@@ -173,8 +183,7 @@ type RegisterOptions struct {
 
 func (o *ValidatedRegisterOptions) Complete(ctx context.Context) (*RegisterOptions, error) {
 	clientOpts := azsdk.NewClientOptions(azsdk.ComponentFleet)
-	// FIXME Cloud should be determined by other means.
-	clientOpts.Cloud = cloud.AzurePublic
+	clientOpts.Cloud = o.cloudConfiguration
 
 	dbClient, err := database.NewCosmosDatabaseClient(o.CosmosURL, o.CosmosName, clientOpts)
 	if err != nil {

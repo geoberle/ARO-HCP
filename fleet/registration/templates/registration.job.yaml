@@ -42,6 +42,8 @@ spec:
           value: "WorkloadIdentityCredential"
         args:
         - register
+        - --cloud-environment
+        - '{{ .Values.cloudEnvironmentName }}'
         - --cosmos-url
         - '{{ .Values.cosmos.url }}'
         - --cosmos-name

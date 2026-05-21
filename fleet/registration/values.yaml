@@ -3,6 +3,7 @@ image:
   repository: '{{ .fleet.image.repository }}'
   digest: '{{ .fleet.image.digest }}'
 serviceAccountName: '{{ .fleet.k8s.serviceAccountName }}'
+cloudEnvironmentName: '{{ .cloudEnvironmentName }}'
 cosmos:
   url: "__cosmosUrl__"
   name: '{{ .frontend.cosmosDB.name }}'
