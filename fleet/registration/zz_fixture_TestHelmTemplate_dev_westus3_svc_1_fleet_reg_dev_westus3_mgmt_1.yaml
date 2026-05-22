@@ -44,6 +44,8 @@ spec:
           value: "WorkloadIdentityCredential"
         args:
         - register
+        - --cloud-environment
+        - 'AzurePublicCloud'
         - --cosmos-url
         - '__cosmosUrl__'
         - --cosmos-name
@@ -68,4 +70,6 @@ spec:
         - 'http://maestro.maestro.svc.cluster.local:8000'
         - --maestro-grpc-target
         - 'maestro-grpc.maestro.svc.cluster.local:8090'
+        - --kube-applier-cosmos-container-name
+        - 'Manifests-MC-1'
 

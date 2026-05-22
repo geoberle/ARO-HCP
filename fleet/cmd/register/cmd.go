@@ -151,11 +151,10 @@ func (o *RegisterOptions) registerManagementCluster(ctx context.Context) error {
 		return nil
 	}
 
-	updated := o.buildManagementCluster()
-	updated.Status.Conditions = existing.Status.Conditions
+	o.applyToManagementCluster(existing)
 
 	logger.Info("Updating existing management cluster", "stampIdentifier", o.stampIdentifier)
-	if _, err := mcCRUD.Replace(ctx, updated, existing, nil); err != nil {
+	if _, err := mcCRUD.Replace(ctx, existing, existing, nil); err != nil {
 		return fmt.Errorf("failed to update management cluster for stamp %q: %w", o.stampIdentifier, err)
 	}
 	logger.Info("Management cluster updated", "stampIdentifier", o.stampIdentifier)
@@ -163,22 +162,24 @@ func (o *RegisterOptions) registerManagementCluster(ctx context.Context) error {
 }
 
 func (o *RegisterOptions) buildManagementCluster() *fleet.ManagementCluster {
-	return &fleet.ManagementCluster{
+	managementCluster := &fleet.ManagementCluster{
 		CosmosMetadata: api.CosmosMetadata{ResourceID: o.mcResourceID},
 		ResourceID:     o.mcResourceID,
-		Spec: fleet.ManagementClusterSpec{
-			SchedulingPolicy: o.schedulingPolicy,
-		},
-		Status: fleet.ManagementClusterStatus{
-			AKSResourceID:                                        o.aksResourceID,
-			PublicDNSZoneResourceID:                              o.publicDNSZoneResourceID,
-			HostedClustersSecretsKeyVaultURL:                     o.hostedClustersSecretsKeyVaultURL,
-			HostedClustersManagedIdentitiesKeyVaultURL:           o.hostedClustersManagedIdentitiesKeyVaultURL,
-			HostedClustersSecretsKeyVaultManagedIdentityClientID: o.hostedClustersSecretsKeyVaultManagedIdentityClientID,
-			ClusterServiceProvisionShardID:                       o.provisionShardID,
-			MaestroConsumerName:                                  o.maestroConsumerName,
-			MaestroRESTAPIURL:                                    o.maestroRESTAPIURL,
-			MaestroGRPCTarget:                                    o.maestroGRPCTarget,
-		},
 	}
+	o.applyToManagementCluster(managementCluster)
+	managementCluster.Status.ClusterServiceProvisionShardID = o.provisionShardID
+	return managementCluster
+}
+
+func (o *RegisterOptions) applyToManagementCluster(managementCluster *fleet.ManagementCluster) {
+	managementCluster.Spec.SchedulingPolicy = o.schedulingPolicy
+	managementCluster.Status.AKSResourceID = o.aksResourceID
+	managementCluster.Status.PublicDNSZoneResourceID = o.publicDNSZoneResourceID
+	managementCluster.Status.HostedClustersSecretsKeyVaultURL = o.hostedClustersSecretsKeyVaultURL
+	managementCluster.Status.HostedClustersManagedIdentitiesKeyVaultURL = o.hostedClustersManagedIdentitiesKeyVaultURL
+	managementCluster.Status.HostedClustersSecretsKeyVaultManagedIdentityClientID = o.hostedClustersSecretsKeyVaultManagedIdentityClientID
+	managementCluster.Status.MaestroConsumerName = o.maestroConsumerName
+	managementCluster.Status.MaestroRESTAPIURL = o.maestroRESTAPIURL
+	managementCluster.Status.MaestroGRPCTarget = o.maestroGRPCTarget
+	managementCluster.Status.KubeApplierCosmosContainerName = o.kubeApplierCosmosContainerName
 }

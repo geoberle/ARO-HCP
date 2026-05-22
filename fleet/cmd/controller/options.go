@@ -50,6 +50,7 @@ type RawControllerOptions struct {
 	ClustersServiceTLSInsecure bool
 
 	CloudEnvironment string
+	Region           string
 
 	KubeNamespace        string
 	LeaderElectionID     string
@@ -69,6 +70,7 @@ func BindControllerOptions(opts *RawControllerOptions, cmd *cobra.Command) error
 	cmd.Flags().StringVar(&opts.CosmosURL, "cosmos-url", opts.CosmosURL, "CosmosDB endpoint URL")
 	cmd.Flags().StringVar(&opts.CosmosName, "cosmos-name", opts.CosmosName, "CosmosDB database name")
 	cmd.Flags().StringVar(&opts.CloudEnvironment, "cloud-environment", opts.CloudEnvironment, "Azure cloud environment (AzurePublicCloud, AzureChinaCloud, AzureUSGovernmentCloud)")
+	cmd.Flags().StringVar(&opts.Region, "region", opts.Region, "Azure region")
 	cmd.Flags().StringVar(&opts.ClustersServiceURL, "clusters-service-url", opts.ClustersServiceURL, "URL of the ClustersService API")
 	cmd.Flags().BoolVar(&opts.ClustersServiceTLSInsecure, "clusters-service-tls-insecure", opts.ClustersServiceTLSInsecure, "skip TLS verification for ClustersService")
 	cmd.Flags().StringVar(&opts.KubeNamespace, "kube-namespace", opts.KubeNamespace, "Kubernetes namespace for leader election lease")
@@ -78,6 +80,7 @@ func BindControllerOptions(opts *RawControllerOptions, cmd *cobra.Command) error
 
 	for _, flag := range []string{
 		"cloud-environment",
+		"region",
 		"cosmos-url",
 		"cosmos-name",
 		"clusters-service-url",
@@ -130,6 +133,7 @@ type controllerOptions struct {
 	fleetDBClient         database.FleetDBClient
 	clustersServiceClient ocm.ClusterServiceClientSpec
 	leaderElectionLock    resourcelock.Interface
+	region                string
 	healthzListenAddr     string
 	metricsListenAddr     string
 }
@@ -177,6 +181,7 @@ func (o *ValidatedControllerOptions) Complete(ctx context.Context) (*ControllerO
 			fleetDBClient:         fleetDBClient,
 			clustersServiceClient: clustersServiceClient,
 			leaderElectionLock:    leaderElectionLock,
+			region:                o.Region,
 			healthzListenAddr:     o.HealthzListenAddress,
 			metricsListenAddr:     o.MetricsListenAddress,
 		},
@@ -188,6 +193,7 @@ func (o *ControllerOptions) Run(ctx context.Context) error {
 		FleetDBClient:         o.fleetDBClient,
 		ClustersServiceClient: o.clustersServiceClient,
 		LeaderElectionLock:    o.leaderElectionLock,
+		Region:                o.region,
 		HealthzListenAddr:     o.healthzListenAddr,
 		MetricsListenAddr:     o.metricsListenAddr,
 	}

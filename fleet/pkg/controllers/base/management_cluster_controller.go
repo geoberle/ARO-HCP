@@ -224,6 +224,7 @@ func (c *ManagementClusterWatchingController) processNext(ctx context.Context) b
 	logger := key.AddLoggerValues(utils.LoggerFromContext(ctx))
 	ctx = utils.ContextWithLogger(ctx, logger)
 
+	ReconcileTotal.WithLabelValues(c.name).Inc()
 	if err := c.syncer.SyncOnce(ctx, key); err != nil {
 		utilruntime.HandleErrorWithContext(ctx, err, "sync error; requeuing", "key", key)
 		c.queue.AddRateLimited(key)

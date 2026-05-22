@@ -25,12 +25,17 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	"github.com/Azure/ARO-HCP/fleet/cmd/controller"
 	"github.com/Azure/ARO-HCP/fleet/cmd/register"
+	"github.com/Azure/ARO-HCP/internal/utils"
 	"github.com/Azure/ARO-HCP/internal/version"
 )
 
 func main() {
+	utilruntime.PanicHandlers = append(utilruntime.PanicHandlers, utils.IncrementPanicMetrics)
+
 	logger := createLogger(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

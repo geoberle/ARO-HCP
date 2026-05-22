@@ -2,3 +2,5 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: "{{ .fleet.k8s.namespace }}"
+  labels:
+    "istio.io/rev": "{{ .svc.istio.tag }}"

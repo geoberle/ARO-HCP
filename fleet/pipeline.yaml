@@ -74,6 +74,10 @@ resourceGroups:
     kustoDatabase: '{{ .kusto.serviceLogsDatabase }}'
     kustoTable: 'containerLogs'
     inputVariables:
+      cosmosUrl:
+        resourceGroup: service
+        step: output
+        name: cosmosDBDocumentEndpoint
       tenantId:
         resourceGroup: service
         step: output

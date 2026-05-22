@@ -7,10 +7,11 @@ image:
   repository: '{{ .fleet.image.repository }}'
   digest: '{{ .fleet.image.digest }}'
 cloudEnvironmentName: '{{ .cloudEnvironmentName }}'
+region: '{{ .region }}'
 cosmos:
   url: "__cosmosUrl__"
   name: '{{ .frontend.cosmosDB.name }}'
 clustersService:
-  url: "https://clusters-service.cluster-service.svc.cluster.local:8001"
+  namespace: "{{ .clustersService.k8s.namespace }}"
 controller:
   namespace: '{{ .fleet.k8s.namespace }}'

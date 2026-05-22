@@ -700,6 +700,8 @@ defaults:
     k8s:
       namespace: fleet
       serviceAccountName: fleet
+    registration:
+      autoApproveStamps: true
   # Admin API
   adminApi:
     audit:

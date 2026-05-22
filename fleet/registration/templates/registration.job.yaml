@@ -71,3 +71,5 @@ spec:
         - '{{ .Values.registration.maestroRESTAPIURL }}'
         - --maestro-grpc-target
         - '{{ .Values.registration.maestroGRPCTarget }}'
+        - --kube-applier-cosmos-container-name
+        - '{{ .Values.registration.kubeApplierCosmosContainerName }}'

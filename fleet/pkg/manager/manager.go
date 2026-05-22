@@ -30,9 +30,12 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/component-base/metrics/legacyregistry"
+	_ "k8s.io/component-base/metrics/prometheus/clientgo"
 
 	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/base"
 	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/clustersserviceregistration"
+	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/datadump"
+	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/maestroregistration"
 	"github.com/Azure/ARO-HCP/internal/database"
 	"github.com/Azure/ARO-HCP/internal/database/informers"
 	"github.com/Azure/ARO-HCP/internal/ocm"
@@ -52,7 +55,9 @@ const (
 type Manager struct {
 	FleetDBClient         database.FleetDBClient
 	ClustersServiceClient ocm.ClusterServiceClientSpec
+	MaestroConsumerClient maestroregistration.MaestroConsumerClient
 	LeaderElectionLock    resourcelock.Interface
+	Region                string
 	HealthzListenAddr     string
 	MetricsListenAddr     string
 }
@@ -148,7 +153,7 @@ func (m *Manager) runControllersUnderLeaderElection(
 	fleetInformers := informers.NewFleetInformers(ctx, m.FleetDBClient.GlobalListers())
 
 	stampInformer, stampLister := fleetInformers.Stamps()
-	managementClusterInformer, _ := fleetInformers.ManagementClusters()
+	managementClusterInformer, managementClusterLister := fleetInformers.ManagementClusters()
 
 	csRegistrationController, err := clustersserviceregistration.NewClustersServiceRegistrationController(
 		managementClusterInformer,
@@ -156,10 +161,34 @@ func (m *Manager) runControllersUnderLeaderElection(
 		m.FleetDBClient,
 		m.ClustersServiceClient,
 		stampLister,
+		m.Region,
 		base.ManagementClusterWatchingControllerConfig{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create CS registration controller: %w", err)
+	}
+
+	maestroRegistrationController, err := maestroregistration.NewMaestroRegistrationController(
+		managementClusterInformer,
+		stampInformer,
+		m.FleetDBClient,
+		m.MaestroConsumerClient,
+		stampLister,
+		base.ManagementClusterWatchingControllerConfig{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create Maestro registration controller: %w", err)
+	}
+
+	dataDumpController, err := datadump.NewManagementClusterDataDumpController(
+		managementClusterInformer,
+		stampInformer,
+		managementClusterLister,
+		stampLister,
+		base.ManagementClusterWatchingControllerConfig{CooldownPeriod: 4 * time.Minute},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create data dump controller: %w", err)
 	}
 
 	leaderElector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
@@ -180,6 +209,8 @@ func (m *Manager) runControllersUnderLeaderElection(
 
 				logger.Info("informer caches synced; starting controllers")
 				go csRegistrationController.Run(ctx, 4)
+				go maestroRegistrationController.Run(ctx, 4)
+				go dataDumpController.Run(ctx, 1)
 			},
 			OnStoppedLeading: func() {
 				logger.Info("lost leader election lease")

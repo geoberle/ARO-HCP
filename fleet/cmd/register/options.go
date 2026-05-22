@@ -49,6 +49,7 @@ type RawRegisterOptions struct {
 	MaestroConsumerName                                  string
 	MaestroRESTAPIURL                                    string
 	MaestroGRPCTarget                                    string
+	KubeApplierCosmosContainerName                       string
 }
 
 func DefaultRegisterOptions() *RawRegisterOptions {
@@ -70,6 +71,7 @@ func BindRegisterOptions(opts *RawRegisterOptions, cmd *cobra.Command) error {
 	cmd.Flags().StringVar(&opts.MaestroConsumerName, "maestro-consumer-name", opts.MaestroConsumerName, "Maestro consumer name")
 	cmd.Flags().StringVar(&opts.MaestroRESTAPIURL, "maestro-rest-api-url", opts.MaestroRESTAPIURL, "Maestro REST API URL")
 	cmd.Flags().StringVar(&opts.MaestroGRPCTarget, "maestro-grpc-target", opts.MaestroGRPCTarget, "Maestro gRPC dial target (host:port)")
+	cmd.Flags().StringVar(&opts.KubeApplierCosmosContainerName, "kube-applier-cosmos-container-name", opts.KubeApplierCosmosContainerName, "Cosmos container name for kube-applier manifests")
 
 	for _, flag := range []string{
 		"cloud-environment",
@@ -85,6 +87,7 @@ func BindRegisterOptions(opts *RawRegisterOptions, cmd *cobra.Command) error {
 		"maestro-consumer-name",
 		"maestro-rest-api-url",
 		"maestro-grpc-target",
+		"kube-applier-cosmos-container-name",
 	} {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
 			return err
@@ -175,6 +178,7 @@ type registerOptions struct {
 	maestroConsumerName                                  string
 	maestroRESTAPIURL                                    string
 	maestroGRPCTarget                                    string
+	kubeApplierCosmosContainerName                       string
 }
 
 type RegisterOptions struct {
@@ -208,10 +212,11 @@ func (o *ValidatedRegisterOptions) Complete(ctx context.Context) (*RegisterOptio
 			hostedClustersSecretsKeyVaultURL: o.HostedClustersSecretsKeyVaultURL,
 			hostedClustersManagedIdentitiesKeyVaultURL:           o.HostedClustersManagedIdentitiesKeyVaultURL,
 			hostedClustersSecretsKeyVaultManagedIdentityClientID: o.HostedClustersSecretsKeyVaultManagedIdentityClientID,
-			provisionShardID:    o.provisionShardID,
-			maestroConsumerName: o.MaestroConsumerName,
-			maestroRESTAPIURL:   o.MaestroRESTAPIURL,
-			maestroGRPCTarget:   o.MaestroGRPCTarget,
+			provisionShardID:               o.provisionShardID,
+			maestroConsumerName:            o.MaestroConsumerName,
+			maestroRESTAPIURL:              o.MaestroRESTAPIURL,
+			maestroGRPCTarget:              o.MaestroGRPCTarget,
+			kubeApplierCosmosContainerName: o.KubeApplierCosmosContainerName,
 		},
 	}, nil
 }

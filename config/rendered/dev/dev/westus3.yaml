@@ -261,6 +261,8 @@ fleet:
     namespace: fleet
     serviceAccountName: fleet
   managedIdentityName: fleet
+  registration:
+    autoApproveStamps: false
 frontend:
   audit:
     connectSocket: false

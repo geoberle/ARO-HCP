@@ -9,7 +9,7 @@ cosmos:
   name: '{{ .frontend.cosmosDB.name }}'
 registration:
   stampIdentifier: '1'
-  autoApprove: false
+  autoApprove: '{{ .fleet.registration.autoApproveStamps }}'
   schedulingPolicy: Schedulable
   aksResourceID: "__aksResourceID__"
   publicDNSZoneResourceID: "__cxDnsZoneResourceId__"
@@ -19,3 +19,4 @@ registration:
   hostedClustersSecretsKeyVaultManagedIdentityClientID: "__hostedClustersSecretsKvMiClientId__"
   maestroRESTAPIURL: "http://maestro.maestro.svc.cluster.local:8000"
   maestroGRPCTarget: "maestro-grpc.maestro.svc.cluster.local:8090"
+  kubeApplierCosmosContainerName: '{{ .kubeApplier.cosmosContainerName }}'

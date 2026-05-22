@@ -44,12 +44,14 @@ spec:
         - controller
         - --cloud-environment
         - '{{ .Values.cloudEnvironmentName }}'
+        - --region
+        - '{{ .Values.region }}'
         - --cosmos-url
         - '{{ .Values.cosmos.url }}'
         - --cosmos-name
         - '{{ .Values.cosmos.name }}'
         - --clusters-service-url
-        - '{{ .Values.clustersService.url }}'
+        - 'http://clusters-service.{{ .Values.clustersService.namespace }}.svc.cluster.local:8000'
         - --kube-namespace
         - '{{ .Values.controller.namespace }}'
         ports:

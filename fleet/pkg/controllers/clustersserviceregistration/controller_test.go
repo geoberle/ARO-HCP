@@ -198,15 +198,17 @@ func TestReconcileProvisionShard(t *testing.T) {
 			wantErrContains: "searching for provision shard by AKS resource ID: list failed",
 		},
 		{
-			name: "stored ID exists, Get 404, no match, Post OK with stored ID reused",
+			name: "stored ID exists, Get 404, no match, Post OK followed by status update",
 			mc:   testManagementCluster("s1"),
 			setupCS: func(ctrl *gomock.Controller) ocm.ClusterServiceClientSpec {
+				newID, _ := api.NewInternalID(newHREF)
 				mock := ocm.NewMockClusterServiceClientSpec(ctrl)
 				mock.EXPECT().GetProvisionShard(gomock.Any(), storedID).Return(nil, notFound)
 				mock.EXPECT().ListProvisionShards().Return(
 					ocm.NewSimpleProvisionShardListIterator(nil, nil),
 				)
 				mock.EXPECT().PostProvisionShard(gomock.Any(), gomock.Any()).Return(api.Must(arohcpv1alpha1.NewProvisionShard().HREF(newHREF).Build()), nil)
+				mock.EXPECT().UpdateProvisionShard(gomock.Any(), newID, gomock.Any()).Return(api.Must(arohcpv1alpha1.NewProvisionShard().HREF(newHREF).Build()), nil)
 				return mock
 			},
 			wantHREF: newHREF,
@@ -245,18 +247,20 @@ func TestReconcileProvisionShard(t *testing.T) {
 			wantHREF: foundHREF,
 		},
 		{
-			name: "no stored ID, no match, Post OK without ID on builder",
+			name: "no stored ID, no match, Post OK followed by status update",
 			mc: func() *fleet.ManagementCluster {
 				managementCluster := testManagementCluster("s1")
 				managementCluster.Status.ClusterServiceProvisionShardID = nil
 				return managementCluster
 			}(),
 			setupCS: func(ctrl *gomock.Controller) ocm.ClusterServiceClientSpec {
+				newID, _ := api.NewInternalID(newHREF)
 				mock := ocm.NewMockClusterServiceClientSpec(ctrl)
 				mock.EXPECT().ListProvisionShards().Return(
 					ocm.NewSimpleProvisionShardListIterator(nil, nil),
 				)
 				mock.EXPECT().PostProvisionShard(gomock.Any(), gomock.Any()).Return(api.Must(arohcpv1alpha1.NewProvisionShard().HREF(newHREF).Build()), nil)
+				mock.EXPECT().UpdateProvisionShard(gomock.Any(), newID, gomock.Any()).Return(api.Must(arohcpv1alpha1.NewProvisionShard().HREF(newHREF).Build()), nil)
 				return mock
 			},
 			wantHREF: newHREF,

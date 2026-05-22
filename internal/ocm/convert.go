@@ -59,7 +59,7 @@ import (
 // See docs/api-version-defaults-and-storage.md for the full design rationale.
 
 const (
-	csCloudProvider    string = "azure"
+	CSCloudProvider    string = "azure"
 	csProductId        string = "aro"
 	csHypershifEnabled bool   = true
 	csCCSEnabled       bool   = true
@@ -84,6 +84,7 @@ const (
 	CSProvisionShardStatusActive        string = "active"
 	CSProvisionShardStatusMaintenance   string = "maintenance"
 	CSProvisionShardStatusOffline       string = "offline"
+	CSProvisionShardTopologyShared      string = "shared"
 )
 
 // Sentinel error for use with errors.Is
@@ -439,7 +440,7 @@ func withImmutableAttributes(clusterBuilder *arohcpv1alpha1.ClusterBuilder, hcpC
 		Region(arohcpv1alpha1.NewCloudRegion().
 			ID(hcpCluster.Location)).
 		CloudProvider(arohcpv1alpha1.NewCloudProvider().
-			ID(csCloudProvider)).
+			ID(CSCloudProvider)).
 		Product(arohcpv1alpha1.NewProduct().
 			ID(csProductId)).
 		Hypershift(arohcpv1alpha1.NewHypershift().

@@ -44,6 +44,7 @@ type clustersServiceRegistrationSyncer struct {
 	fleetDBClient         database.FleetDBClient
 	clustersServiceClient ocm.ClusterServiceClientSpec
 	stampLister           listers.StampLister
+	region                string
 }
 
 // NewClustersServiceRegistrationController creates a ManagementClusterWatchingController
@@ -54,12 +55,14 @@ func NewClustersServiceRegistrationController(
 	fleetDBClient database.FleetDBClient,
 	clustersServiceClient ocm.ClusterServiceClientSpec,
 	stampLister listers.StampLister,
+	region string,
 	cfg fleetcontrollers.ManagementClusterWatchingControllerConfig,
 ) (*fleetcontrollers.ManagementClusterWatchingController, error) {
 	syncer := &clustersServiceRegistrationSyncer{
 		fleetDBClient:         fleetDBClient,
 		clustersServiceClient: clustersServiceClient,
 		stampLister:           stampLister,
+		region:                region,
 	}
 
 	controller := fleetcontrollers.NewManagementClusterWatchingController(
@@ -145,14 +148,13 @@ func (s *clustersServiceRegistrationSyncer) reconcileProvisionShard(
 	ctx context.Context,
 	managementCluster *fleet.ManagementCluster,
 ) (*api.InternalID, error) {
-	builder := buildProvisionShard(managementCluster)
-
 	existingID, err := s.findExistingProvisionShard(ctx, managementCluster)
 	if err != nil {
 		return nil, err
 	}
 
 	if existingID != nil {
+		builder := buildProvisionShardForUpdate(managementCluster)
 		updated, err := s.clustersServiceClient.UpdateProvisionShard(ctx, *existingID, builder)
 		if err != nil {
 			return nil, fmt.Errorf("updating provision shard: %w", err)
@@ -164,7 +166,8 @@ func (s *clustersServiceRegistrationSyncer) reconcileProvisionShard(
 		return &shardID, nil
 	}
 
-	created, err := s.clustersServiceClient.PostProvisionShard(ctx, builder)
+	createBuilder := buildProvisionShardForCreate(managementCluster, s.region)
+	created, err := s.clustersServiceClient.PostProvisionShard(ctx, createBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("creating provision shard: %w", err)
 	}
@@ -172,6 +175,15 @@ func (s *clustersServiceRegistrationSyncer) reconcileProvisionShard(
 	if err != nil {
 		return nil, fmt.Errorf("parsing created provision shard HREF: %w", err)
 	}
+
+	desiredStatus := schedulingPolicyToShardStatus(managementCluster.Spec.SchedulingPolicy)
+	if desiredStatus != ocm.CSProvisionShardStatusMaintenance {
+		updateBuilder := buildProvisionShardForUpdate(managementCluster)
+		if _, err := s.clustersServiceClient.UpdateProvisionShard(ctx, createdID, updateBuilder); err != nil {
+			return nil, fmt.Errorf("setting provision shard status after create: %w", err)
+		}
+	}
+
 	return &createdID, nil
 }
 
@@ -214,19 +226,10 @@ func (s *clustersServiceRegistrationSyncer) findProvisionShardByAKSResourceID(ct
 	return nil, nil
 }
 
-func buildProvisionShard(managementCluster *fleet.ManagementCluster) *arohcpv1alpha1.ProvisionShardBuilder {
-	shardStatus := ocm.CSProvisionShardStatusActive
-	if managementCluster.Spec.SchedulingPolicy == fleet.ManagementClusterSchedulingPolicyUnschedulable {
-		shardStatus = ocm.CSProvisionShardStatusMaintenance
-	}
-
-	builder := arohcpv1alpha1.NewProvisionShard()
-	if managementCluster.Status.ClusterServiceProvisionShardID != nil {
-		builder.ID(managementCluster.Status.ClusterServiceProvisionShardID.ID())
-		builder.HREF(managementCluster.Status.ClusterServiceProvisionShardID.Path())
-	}
-
-	return builder.
+func baseProvisionShardBuilder(managementCluster *fleet.ManagementCluster, region string) *arohcpv1alpha1.ProvisionShardBuilder {
+	return arohcpv1alpha1.NewProvisionShard().
+		CloudProvider(arohcpv1alpha1.NewCloudProvider().ID(ocm.CSCloudProvider)).
+		Region(arohcpv1alpha1.NewCloudRegion().ID(region)).
 		AzureShard(arohcpv1alpha1.NewAzureShard().
 			AksManagementClusterResourceId(managementCluster.Status.AKSResourceID.String()).
 			PublicDnsZoneResourceId(managementCluster.Status.PublicDNSZoneResourceID.String()).
@@ -243,7 +246,28 @@ func buildProvisionShard(managementCluster *fleet.ManagementCluster) *arohcpv1al
 				Url(managementCluster.Status.MaestroGRPCTarget),
 			),
 		).
-		Status(shardStatus)
+		Topology(ocm.CSProvisionShardTopologyShared)
+}
+
+func schedulingPolicyToShardStatus(policy fleet.ManagementClusterSchedulingPolicy) string {
+	if policy == fleet.ManagementClusterSchedulingPolicyUnschedulable {
+		return ocm.CSProvisionShardStatusMaintenance
+	}
+	return ocm.CSProvisionShardStatusActive
+}
+
+func buildProvisionShardForCreate(managementCluster *fleet.ManagementCluster, region string) *arohcpv1alpha1.ProvisionShardBuilder {
+	builder := baseProvisionShardBuilder(managementCluster, region)
+	if managementCluster.Spec.SchedulingPolicy == fleet.ManagementClusterSchedulingPolicyUnschedulable {
+		builder.Status(ocm.CSProvisionShardStatusMaintenance)
+	}
+	return builder
+}
+
+func buildProvisionShardForUpdate(managementCluster *fleet.ManagementCluster) *arohcpv1alpha1.ProvisionShardBuilder {
+	return arohcpv1alpha1.NewProvisionShard().
+		Topology(ocm.CSProvisionShardTopologyShared).
+		Status(schedulingPolicyToShardStatus(managementCluster.Spec.SchedulingPolicy))
 }
 
 func shardConditionForPolicy(policy fleet.ManagementClusterSchedulingPolicy) (fleet.ManagementClusterConditionReason, string) {
