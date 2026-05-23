@@ -26,17 +26,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 
-	arohcpv1alpha1 "github.com/openshift-online/ocm-api-model/clientapi/arohcp/v1alpha1"
 	ocmerrors "github.com/openshift-online/ocm-sdk-go/errors"
 
 	fleetcontrollers "github.com/Azure/ARO-HCP/fleet/pkg/controllers/base"
 	"github.com/Azure/ARO-HCP/internal/api"
 	"github.com/Azure/ARO-HCP/internal/api/fleet"
+	"github.com/Azure/ARO-HCP/internal/controllerutils"
 	"github.com/Azure/ARO-HCP/internal/database"
 	"github.com/Azure/ARO-HCP/internal/database/listers"
 	"github.com/Azure/ARO-HCP/internal/ocm"
 	"github.com/Azure/ARO-HCP/internal/utils"
 )
+
+var errStampNotApproved = errors.New("parent stamp is not approved")
 
 const defaultInformerResyncPeriod = 5 * time.Minute
 
@@ -57,7 +59,7 @@ func NewClustersServiceRegistrationController(
 	stampLister listers.StampLister,
 	region string,
 	cfg fleetcontrollers.ManagementClusterWatchingControllerConfig,
-) (*fleetcontrollers.ManagementClusterWatchingController, error) {
+) *fleetcontrollers.ManagementClusterWatchingController {
 	syncer := &clustersServiceRegistrationSyncer{
 		fleetDBClient:         fleetDBClient,
 		clustersServiceClient: clustersServiceClient,
@@ -72,10 +74,10 @@ func NewClustersServiceRegistrationController(
 	)
 
 	if err := controller.QueueForInformers(defaultInformerResyncPeriod, managementClusterInformer, stampInformer); err != nil {
-		return nil, err
+		panic(err) // coding error
 	}
 
-	return controller, nil
+	return controller
 }
 
 func (s *clustersServiceRegistrationSyncer) SyncOnce(ctx context.Context, key fleetcontrollers.ManagementClusterKey) error {
@@ -87,61 +89,72 @@ func (s *clustersServiceRegistrationSyncer) SyncOnce(ctx context.Context, key fl
 		if database.IsNotFoundError(err) {
 			return nil
 		}
-		return fmt.Errorf("fetching management cluster: %w", err)
+		return utils.TrackError(err)
 	}
 
 	stamp, err := s.stampLister.Get(ctx, key.StampIdentifier)
 	if err != nil {
-		return fmt.Errorf("looking up stamp %q: %w", key.StampIdentifier, err)
+		return utils.TrackError(err)
 	}
 
-	if !apimeta.IsStatusConditionTrue(stamp.Status.Conditions, string(fleet.StampConditionApproved)) {
-		logger.Info("stamp not approved, skipping CS registration")
-		apimeta.SetStatusCondition(&managementCluster.Status.Conditions, metav1.Condition{
-			Type:               string(fleet.ManagementClusterConditionClustersServiceRegistered),
-			Status:             metav1.ConditionFalse,
-			Reason:             string(fleet.ManagementClusterConditionReasonStampNotApproved),
-			Message:            "Parent stamp is not approved",
-			LastTransitionTime: metav1.Now(),
-		})
-		if _, err := managementClusterCRUD.Replace(ctx, managementCluster, managementCluster, nil); err != nil {
-			return fmt.Errorf("writing unapproved condition: %w", err)
+	existing := managementCluster.DeepCopy()
+
+	shardID, syncErr := s.reconcile(ctx, managementCluster, stamp)
+	setClustersServiceRegisteredCondition(&managementCluster.Status.Conditions, syncErr, managementCluster.Spec.SchedulingPolicy)
+
+	if shardID != nil {
+		managementCluster.Status.ClusterServiceProvisionShardID = shardID
+	}
+
+	if controllerutils.NeedsUpdate(existing, managementCluster) {
+		if _, writeErr := managementClusterCRUD.Replace(ctx, managementCluster, existing, nil); writeErr != nil {
+			return utils.TrackError(writeErr)
 		}
-		return nil
 	}
 
-	shardID, err := s.reconcileProvisionShard(ctx, managementCluster)
-	if err != nil {
-		apimeta.SetStatusCondition(&managementCluster.Status.Conditions, metav1.Condition{
-			Type:               string(fleet.ManagementClusterConditionClustersServiceRegistered),
-			Status:             metav1.ConditionFalse,
-			Reason:             string(fleet.ManagementClusterConditionReasonRegistrationFailed),
-			Message:            fmt.Sprintf("ClustersService registration failed: %v", err),
-			LastTransitionTime: metav1.Now(),
-		})
-		if _, writeErr := managementClusterCRUD.Replace(ctx, managementCluster, managementCluster, nil); writeErr != nil {
-			logger.Error(writeErr, "failed to write failure condition")
+	if syncErr != nil {
+		if errors.Is(syncErr, errStampNotApproved) {
+			return nil
 		}
-		return fmt.Errorf("reconciling provision shard: %w", err)
-	}
-
-	managementCluster.Status.ClusterServiceProvisionShardID = shardID
-
-	reason, message := shardConditionForPolicy(managementCluster.Spec.SchedulingPolicy)
-	apimeta.SetStatusCondition(&managementCluster.Status.Conditions, metav1.Condition{
-		Type:               string(fleet.ManagementClusterConditionClustersServiceRegistered),
-		Status:             metav1.ConditionTrue,
-		Reason:             string(reason),
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
-	})
-
-	if _, err := managementClusterCRUD.Replace(ctx, managementCluster, managementCluster, nil); err != nil {
-		return fmt.Errorf("writing success condition: %w", err)
+		return utils.TrackError(syncErr)
 	}
 
 	logger.Info("CS registration synced", "provisionShardID", shardID)
 	return nil
+}
+
+func (s *clustersServiceRegistrationSyncer) reconcile(ctx context.Context, managementCluster *fleet.ManagementCluster, stamp *fleet.Stamp) (*api.InternalID, error) {
+	if !apimeta.IsStatusConditionTrue(stamp.Status.Conditions, string(fleet.StampConditionApproved)) {
+		return nil, utils.TrackError(errStampNotApproved)
+	}
+	return s.reconcileProvisionShard(ctx, managementCluster)
+}
+
+func setClustersServiceRegisteredCondition(conditions *[]metav1.Condition, syncErr error, policy fleet.ManagementClusterSchedulingPolicy) {
+	if syncErr == nil {
+		reason, message := shardConditionForPolicy(policy)
+		apimeta.SetStatusCondition(conditions, metav1.Condition{
+			Type:               string(fleet.ManagementClusterConditionClustersServiceRegistered),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(reason),
+			Message:            message,
+			LastTransitionTime: metav1.Now(),
+		})
+		return
+	}
+
+	reason := fleet.ManagementClusterConditionReasonRegistrationFailed
+	if errors.Is(syncErr, errStampNotApproved) {
+		reason = fleet.ManagementClusterConditionReasonStampNotApproved
+	}
+
+	apimeta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               string(fleet.ManagementClusterConditionClustersServiceRegistered),
+		Status:             metav1.ConditionFalse,
+		Reason:             string(reason),
+		Message:            syncErr.Error(),
+		LastTransitionTime: metav1.Now(),
+	})
 }
 
 func (s *clustersServiceRegistrationSyncer) reconcileProvisionShard(
@@ -224,59 +237,4 @@ func (s *clustersServiceRegistrationSyncer) findProvisionShardByAKSResourceID(ct
 		return nil, err
 	}
 	return nil, nil
-}
-
-func baseProvisionShardBuilder(managementCluster *fleet.ManagementCluster, region string) *arohcpv1alpha1.ProvisionShardBuilder {
-	return arohcpv1alpha1.NewProvisionShard().
-		CloudProvider(arohcpv1alpha1.NewCloudProvider().ID(ocm.CSCloudProvider)).
-		Region(arohcpv1alpha1.NewCloudRegion().ID(region)).
-		AzureShard(arohcpv1alpha1.NewAzureShard().
-			AksManagementClusterResourceId(managementCluster.Status.AKSResourceID.String()).
-			PublicDnsZoneResourceId(managementCluster.Status.PublicDNSZoneResourceID.String()).
-			CxSecretsKeyVaultUrl(managementCluster.Status.HostedClustersSecretsKeyVaultURL).
-			CxManagedIdentitiesKeyVaultUrl(managementCluster.Status.HostedClustersManagedIdentitiesKeyVaultURL).
-			CxSecretsKeyVaultManagedIdentityClientId(managementCluster.Status.HostedClustersSecretsKeyVaultManagedIdentityClientID),
-		).
-		MaestroConfig(arohcpv1alpha1.NewProvisionShardMaestroConfig().
-			ConsumerName(managementCluster.Status.MaestroConsumerName).
-			RestApiConfig(arohcpv1alpha1.NewProvisionShardMaestroRestApiConfig().
-				Url(managementCluster.Status.MaestroRESTAPIURL),
-			).
-			GrpcApiConfig(arohcpv1alpha1.NewProvisionShardMaestroGrpcApiConfig().
-				Url(managementCluster.Status.MaestroGRPCTarget),
-			),
-		).
-		Topology(ocm.CSProvisionShardTopologyShared)
-}
-
-func schedulingPolicyToShardStatus(policy fleet.ManagementClusterSchedulingPolicy) string {
-	if policy == fleet.ManagementClusterSchedulingPolicyUnschedulable {
-		return ocm.CSProvisionShardStatusMaintenance
-	}
-	return ocm.CSProvisionShardStatusActive
-}
-
-func buildProvisionShardForCreate(managementCluster *fleet.ManagementCluster, region string) *arohcpv1alpha1.ProvisionShardBuilder {
-	builder := baseProvisionShardBuilder(managementCluster, region)
-	if managementCluster.Spec.SchedulingPolicy == fleet.ManagementClusterSchedulingPolicyUnschedulable {
-		builder.Status(ocm.CSProvisionShardStatusMaintenance)
-	}
-	return builder
-}
-
-func buildProvisionShardForUpdate(managementCluster *fleet.ManagementCluster) *arohcpv1alpha1.ProvisionShardBuilder {
-	return arohcpv1alpha1.NewProvisionShard().
-		Topology(ocm.CSProvisionShardTopologyShared).
-		Status(schedulingPolicyToShardStatus(managementCluster.Spec.SchedulingPolicy))
-}
-
-func shardConditionForPolicy(policy fleet.ManagementClusterSchedulingPolicy) (fleet.ManagementClusterConditionReason, string) {
-	switch policy {
-	case fleet.ManagementClusterSchedulingPolicySchedulable:
-		return fleet.ManagementClusterConditionReasonProvisionShardActive, "Provision shard is active"
-	case fleet.ManagementClusterSchedulingPolicyUnschedulable:
-		return fleet.ManagementClusterConditionReasonProvisionShardMaintenance, "Provision shard is in maintenance"
-	default:
-		return fleet.ManagementClusterConditionReasonProvisionShardStatusUnknown, fmt.Sprintf("Unknown scheduling policy %q", policy)
-	}
 }

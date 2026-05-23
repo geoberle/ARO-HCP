@@ -28,8 +28,10 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 
+	maestroopenapi "github.com/openshift-online/maestro/pkg/api/openapi"
 	ocmsdk "github.com/openshift-online/ocm-sdk-go"
 
+	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/maestroregistration"
 	"github.com/Azure/ARO-HCP/fleet/pkg/manager"
 	"github.com/Azure/ARO-HCP/internal/azsdk"
 	"github.com/Azure/ARO-HCP/internal/database"
@@ -48,6 +50,8 @@ type RawControllerOptions struct {
 
 	ClustersServiceURL         string
 	ClustersServiceTLSInsecure bool
+
+	MaestroURL string
 
 	CloudEnvironment string
 	Region           string
@@ -73,6 +77,7 @@ func BindControllerOptions(opts *RawControllerOptions, cmd *cobra.Command) error
 	cmd.Flags().StringVar(&opts.Region, "region", opts.Region, "Azure region")
 	cmd.Flags().StringVar(&opts.ClustersServiceURL, "clusters-service-url", opts.ClustersServiceURL, "URL of the ClustersService API")
 	cmd.Flags().BoolVar(&opts.ClustersServiceTLSInsecure, "clusters-service-tls-insecure", opts.ClustersServiceTLSInsecure, "skip TLS verification for ClustersService")
+	cmd.Flags().StringVar(&opts.MaestroURL, "maestro-url", opts.MaestroURL, "URL of the Maestro REST API")
 	cmd.Flags().StringVar(&opts.KubeNamespace, "kube-namespace", opts.KubeNamespace, "Kubernetes namespace for leader election lease")
 	cmd.Flags().StringVar(&opts.LeaderElectionID, "leader-election-id", opts.LeaderElectionID, "name of the leader election lease")
 	cmd.Flags().StringVar(&opts.HealthzListenAddress, "healthz-listen-address", opts.HealthzListenAddress, "listen address for healthz server")
@@ -84,6 +89,7 @@ func BindControllerOptions(opts *RawControllerOptions, cmd *cobra.Command) error
 		"cosmos-url",
 		"cosmos-name",
 		"clusters-service-url",
+		"maestro-url",
 		"kube-namespace",
 	} {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
@@ -113,6 +119,9 @@ func (o *RawControllerOptions) Validate(ctx context.Context) (*ValidatedControll
 	if len(o.ClustersServiceURL) == 0 {
 		return nil, fmt.Errorf("--clusters-service-url is required")
 	}
+	if len(o.MaestroURL) == 0 {
+		return nil, fmt.Errorf("--maestro-url is required")
+	}
 	if len(o.KubeNamespace) == 0 {
 		return nil, fmt.Errorf("--kube-namespace is required")
 	}
@@ -132,6 +141,7 @@ func (o *RawControllerOptions) Validate(ctx context.Context) (*ValidatedControll
 type controllerOptions struct {
 	fleetDBClient         database.FleetDBClient
 	clustersServiceClient ocm.ClusterServiceClientSpec
+	maestroConsumerClient maestroregistration.MaestroConsumerClient
 	leaderElectionLock    resourcelock.Interface
 	region                string
 	healthzListenAddr     string
@@ -148,18 +158,20 @@ func (o *ValidatedControllerOptions) Complete(ctx context.Context) (*ControllerO
 
 	dbClient, err := database.NewCosmosDatabaseClient(o.CosmosURL, o.CosmosName, clientOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CosmosDB client: %w", err)
+		return nil, err
 	}
 
 	fleetDBClient, err := database.NewFleetDBClient(dbClient)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create fleet DB client: %w", err)
+		return nil, err
 	}
 
 	clustersServiceClient, err := newClustersServiceClient(o.ClustersServiceURL, o.ClustersServiceTLSInsecure)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ClustersService client: %w", err)
+		return nil, err
 	}
+
+	maestroConsumerClient := newMaestroConsumerClient(o.MaestroURL)
 
 	kubeconfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -180,6 +192,7 @@ func (o *ValidatedControllerOptions) Complete(ctx context.Context) (*ControllerO
 		controllerOptions: &controllerOptions{
 			fleetDBClient:         fleetDBClient,
 			clustersServiceClient: clustersServiceClient,
+			maestroConsumerClient: maestroConsumerClient,
 			leaderElectionLock:    leaderElectionLock,
 			region:                o.Region,
 			healthzListenAddr:     o.HealthzListenAddress,
@@ -192,12 +205,24 @@ func (o *ControllerOptions) Run(ctx context.Context) error {
 	mgr := &manager.Manager{
 		FleetDBClient:         o.fleetDBClient,
 		ClustersServiceClient: o.clustersServiceClient,
+		MaestroConsumerClient: o.maestroConsumerClient,
 		LeaderElectionLock:    o.leaderElectionLock,
 		Region:                o.region,
 		HealthzListenAddr:     o.healthzListenAddr,
 		MetricsListenAddr:     o.metricsListenAddr,
 	}
 	return mgr.Run(ctx)
+}
+
+func newMaestroConsumerClient(maestroURL string) maestroregistration.MaestroConsumerClient {
+	maestroConfig := &maestroopenapi.Configuration{
+		Servers: maestroopenapi.ServerConfigurations{{
+			URL: maestroURL,
+		}},
+		HTTPClient: &http.Client{},
+	}
+	apiClient := maestroopenapi.NewAPIClient(maestroConfig)
+	return maestroregistration.NewMaestroConsumerClient(apiClient)
 }
 
 func newClustersServiceClient(url string, tlsInsecure bool) (ocm.ClusterServiceClientSpec, error) {

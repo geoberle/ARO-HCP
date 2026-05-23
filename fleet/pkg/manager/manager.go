@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	_ "k8s.io/component-base/metrics/prometheus/clientgo"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,7 +32,6 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/component-base/metrics/legacyregistry"
-	_ "k8s.io/component-base/metrics/prometheus/clientgo"
 
 	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/base"
 	"github.com/Azure/ARO-HCP/fleet/pkg/controllers/clustersserviceregistration"
@@ -155,7 +156,7 @@ func (m *Manager) runControllersUnderLeaderElection(
 	stampInformer, stampLister := fleetInformers.Stamps()
 	managementClusterInformer, managementClusterLister := fleetInformers.ManagementClusters()
 
-	csRegistrationController, err := clustersserviceregistration.NewClustersServiceRegistrationController(
+	csRegistrationController := clustersserviceregistration.NewClustersServiceRegistrationController(
 		managementClusterInformer,
 		stampInformer,
 		m.FleetDBClient,
@@ -164,11 +165,8 @@ func (m *Manager) runControllersUnderLeaderElection(
 		m.Region,
 		base.ManagementClusterWatchingControllerConfig{},
 	)
-	if err != nil {
-		return fmt.Errorf("failed to create CS registration controller: %w", err)
-	}
 
-	maestroRegistrationController, err := maestroregistration.NewMaestroRegistrationController(
+	maestroRegistrationController := maestroregistration.NewMaestroRegistrationController(
 		managementClusterInformer,
 		stampInformer,
 		m.FleetDBClient,
@@ -176,20 +174,14 @@ func (m *Manager) runControllersUnderLeaderElection(
 		stampLister,
 		base.ManagementClusterWatchingControllerConfig{},
 	)
-	if err != nil {
-		return fmt.Errorf("failed to create Maestro registration controller: %w", err)
-	}
 
-	dataDumpController, err := datadump.NewManagementClusterDataDumpController(
+	dataDumpController := datadump.NewManagementClusterDataDumpController(
 		managementClusterInformer,
 		stampInformer,
 		managementClusterLister,
 		stampLister,
 		base.ManagementClusterWatchingControllerConfig{CooldownPeriod: 4 * time.Minute},
 	)
-	if err != nil {
-		return fmt.Errorf("failed to create data dump controller: %w", err)
-	}
 
 	leaderElector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:          m.LeaderElectionLock,

@@ -32,6 +32,7 @@ import (
 	"github.com/Azure/ARO-HCP/backend/pkg/controllers/controllerutils"
 	"github.com/Azure/ARO-HCP/backend/pkg/maestro"
 	"github.com/Azure/ARO-HCP/internal/api"
+	internalcontrollerutils "github.com/Azure/ARO-HCP/internal/controllerutils"
 	"github.com/Azure/ARO-HCP/internal/database"
 	"github.com/Azure/ARO-HCP/internal/utils"
 )
@@ -349,7 +350,7 @@ func readAndPersistMaestroReadonlyBundleContent(
 	}
 	desired.Status.Conditions = mergedConditions
 
-	if !controllerutils.NeedsUpdate(existing, desired) {
+	if !internalcontrollerutils.NeedsUpdate(existing, desired) {
 		return nil
 	}
 

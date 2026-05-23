@@ -52,6 +52,7 @@ spec:
         - 'arohcpdev-rp-usw3'
         - --stamp-identifier
         - '1'
+        - --auto-approve
         - --scheduling-policy
         - 'Schedulable'
         - --aks-resource-id

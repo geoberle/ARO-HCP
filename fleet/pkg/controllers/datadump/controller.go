@@ -38,7 +38,7 @@ func NewManagementClusterDataDumpController(
 	managementClusterLister listers.ManagementClusterLister,
 	stampLister listers.StampLister,
 	cfg fleetcontrollers.ManagementClusterWatchingControllerConfig,
-) (*fleetcontrollers.ManagementClusterWatchingController, error) {
+) *fleetcontrollers.ManagementClusterWatchingController {
 	syncer := &managementClusterDataDumpSyncer{
 		managementClusterLister: managementClusterLister,
 		stampLister:             stampLister,
@@ -51,10 +51,10 @@ func NewManagementClusterDataDumpController(
 	)
 
 	if err := controller.QueueForInformers(defaultResyncPeriod, managementClusterInformer, stampInformer); err != nil {
-		return nil, err
+		panic(err) // coding error
 	}
 
-	return controller, nil
+	return controller
 }
 
 func (s *managementClusterDataDumpSyncer) SyncOnce(ctx context.Context, key fleetcontrollers.ManagementClusterKey) error {
