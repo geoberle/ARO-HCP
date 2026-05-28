@@ -48,7 +48,3 @@ render:
 	$(MAKE) validate
 .PHONY: render
 
-rebase-and-materialize: render
-	git fetch https://github.com/Azure/ARO-HCP.git main
-	git rebase FETCH_HEAD
-.PHONY: rebase-and-materialize
