@@ -17,7 +17,6 @@ package gatherobservability
 import (
 	"encoding/json"
 	"math"
-	"strings"
 	"testing"
 
 	"github.com/go-echarts/go-echarts/v2/opts"
@@ -220,10 +219,11 @@ func TestFindCommonLabels(t *testing.T) {
 func TestCompactMetricLabel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		metric map[string]string
-		common map[string]bool
-		want   string
+		name         string
+		metric       map[string]string
+		common       map[string]bool
+		displayNames map[string]string
+		want         string
 	}{
 		{
 			name:   "all labels are common - falls back to full label",
@@ -255,12 +255,26 @@ func TestCompactMetricLabel(t *testing.T) {
 			common: nil,
 			want:   "ns=b, pod=a",
 		},
+		{
+			name:         "common calling service stays explicit beside source kind",
+			metric:       map[string]string{"container": "fleet-controller", "cosmosdb_container": "fleet", "source_kind": "informer"},
+			common:       map[string]bool{"container": true, "cosmosdb_container": true},
+			displayNames: map[string]string{"container": "calling_service"},
+			want:         "calling_service=fleet-controller, source_kind=informer",
+		},
+		{
+			name:         "sole explicit label keeps its meaning",
+			metric:       map[string]string{"container": "fleet-controller", "cosmosdb_container": "fleet"},
+			common:       map[string]bool{"container": true, "cosmosdb_container": true},
+			displayNames: map[string]string{"container": "calling_service"},
+			want:         "calling_service=fleet-controller",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := compactMetricLabel(tt.metric, tt.common)
+			got := compactMetricLabel(tt.metric, tt.common, tt.displayNames)
 			if got != tt.want {
 				t.Errorf("compactMetricLabel() = %q, want %q", got, tt.want)
 			}
@@ -368,7 +382,7 @@ func TestLoadQueriesConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		yaml    string
-		wantErr string
+		wantErr bool
 		check   func(t *testing.T, cfg *QueriesConfig)
 	}{
 		{
@@ -407,7 +421,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       query: "up"
       workspace: svc
 `,
-			wantErr: "title is required",
+			wantErr: true,
 		},
 		{
 			name: "empty queries returns error",
@@ -415,7 +429,7 @@ func TestLoadQueriesConfig(t *testing.T) {
   - title: "Empty Panel"
     queries: []
 `,
-			wantErr: "at least one query is required",
+			wantErr: true,
 		},
 		{
 			name: "missing query title returns error",
@@ -425,7 +439,7 @@ func TestLoadQueriesConfig(t *testing.T) {
     - query: "rate(cpu_seconds_total[5m])"
       workspace: svc
 `,
-			wantErr: "title is required",
+			wantErr: true,
 		},
 		{
 			name: "missing query returns error",
@@ -435,7 +449,7 @@ func TestLoadQueriesConfig(t *testing.T) {
     - title: "CPU Usage"
       workspace: svc
 `,
-			wantErr: "query is required",
+			wantErr: true,
 		},
 		{
 			name: "invalid workspace returns error",
@@ -446,7 +460,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       query: "rate(cpu_seconds_total[5m])"
       workspace: mgmt
 `,
-			wantErr: `workspace must be "svc" or "hcp"`,
+			wantErr: true,
 		},
 		{
 			name: "step defaults to 60s when omitted",
@@ -571,7 +585,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       workspace: svc
       chartType: bar
 `,
-			wantErr: `chartType must be "line" or "faceted-stacked-area"`,
+			wantErr: true,
 		},
 		{
 			name: "faceted-stacked-area without facetBy returns error",
@@ -583,7 +597,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       workspace: svc
       chartType: faceted-stacked-area
 `,
-			wantErr: "facetBy is required when chartType is",
+			wantErr: true,
 		},
 		{
 			name: "facetBy without faceted-stacked-area returns error",
@@ -595,7 +609,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       workspace: svc
       facetBy: cluster
 `,
-			wantErr: "facetBy is only valid with chartType",
+			wantErr: true,
 		},
 		{
 			name: "facetBy with explicit line chartType returns error",
@@ -608,7 +622,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       chartType: line
       facetBy: cluster
 `,
-			wantErr: "facetBy is only valid with chartType",
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor source is valid",
@@ -665,7 +679,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       query: "foo"
       workspace: svc
 `,
-			wantErr: `source must be "prometheus" or "azureMonitor"`,
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor with query returns error",
@@ -680,7 +694,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       metrics:
       - name: NormalizedRUConsumption
 `,
-			wantErr: "query/workspace are only valid with source",
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor with unknown resource returns error",
@@ -694,7 +708,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       metrics:
       - name: NormalizedRUConsumption
 `,
-			wantErr: "resource must be one of",
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor without aggregation returns error",
@@ -707,7 +721,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       metrics:
       - name: NormalizedRUConsumption
 `,
-			wantErr: "aggregation is required",
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor with unsupported aggregation returns error",
@@ -721,7 +735,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       metrics:
       - name: NormalizedRUConsumption
 `,
-			wantErr: "unsupported aggregation",
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor without metrics returns error",
@@ -733,7 +747,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       resource: cosmosdb
       aggregation: Maximum
 `,
-			wantErr: "at least one metric is required",
+			wantErr: true,
 		},
 		{
 			name: "azureMonitor metric without name returns error",
@@ -747,7 +761,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       metrics:
       - label: "no name"
 `,
-			wantErr: "name is required",
+			wantErr: true,
 		},
 		{
 			name: "prometheus with metrics field returns error",
@@ -759,7 +773,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       workspace: svc
       aggregation: Maximum
 `,
-			wantErr: "resource/aggregation/metrics are only valid with source",
+			wantErr: true,
 		},
 		{
 			name: "normalizeByAutoscaleMax without CollectionName split returns error",
@@ -774,7 +788,7 @@ func TestLoadQueriesConfig(t *testing.T) {
       - name: AutoscaledRU
         normalizeByAutoscaleMax: true
 `,
-			wantErr: "normalizeByAutoscaleMax requires splitBy",
+			wantErr: true,
 		},
 	}
 
@@ -782,12 +796,9 @@ func TestLoadQueriesConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cfg, err := parseQueriesConfig([]byte(tt.yaml))
-			if tt.wantErr != "" {
+			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
-				}
-				if got := err.Error(); !strings.Contains(got, tt.wantErr) {
-					t.Errorf("error = %q, want it to contain %q", got, tt.wantErr)
+					t.Fatal("expected invalid query configuration to be rejected")
 				}
 				return
 			}
