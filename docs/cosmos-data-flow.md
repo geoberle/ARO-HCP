@@ -4,6 +4,8 @@ This reference covers every concrete controller in the current checkout: backend
 fleet, kube-applier, management-agent, sessiongate, and shared informer management.
 It maps their inputs, decisions and effects across Cosmos DB, Azure, Cluster Service
 and Kubernetes. Source baseline: `7997fa34a240560a792c3dd410396cd7651a9f39`.
+Targeted update baseline: `4c1bf7d74e714d2ce24a8175a0d4846cc78d7113`;
+scope: ContainerRegistry pull-credential validation controller for ARO-24037.
 
 The generation instructions are maintained in [controller-data-flow.md](prompts/controller-data-flow.md).
 The historical filename is retained for existing links.
@@ -20,6 +22,18 @@ Cosmos persistence spans the **Resources**, **Billing**, **Fleet**, and
 use ETag optimistic concurrency and advance `InstanceVersion`; creates, deletes
 and transactional batches have their own semantics. A successful Cosmos write of
 an intent does not establish that an Azure or Kubernetes resource exists.
+
+The shared `PrepareForCreate` and `PrepareForReplace` helpers also derive
+`CosmosMetadata.ParentResourceID` (a `*azcorearm.ResourceID`) from the resource
+ID's parent on every successful preparation. The parent is lower-cased before it
+is re-parsed, so stored resource names and the provider namespace are lower-cased
+while the Azure SDK keeps reserved segment keywords such as `resourceGroups`
+canonical. A nil resource ID, a nil parent, or a subscription-level resource
+(whose parent is the SDK root sentinel with an empty string form) clears the
+field to nil, and any stale value is always reset first; a nil field is omitted
+from JSON. Legacy documents may omit it; it is populated when they are next
+written through these helpers. This metadata does not change controller
+dependencies or the resource lifecycle diagrams.
 
 ## Request Unit (RU) attribution
 
@@ -96,6 +110,31 @@ metadata helpers live under [metadataapihelpers](../internal/apihelpers/metadata
 [kubeapplierapihelpers](../internal/apihelpers/kubeapplierapihelpers/).
 The helper-package move does not change endpoint ownership or transactional boundaries.
 
+### Read-Only Create Fields
+
+For cluster, node-pool and external-auth creates in every supported API version,
+the frontend calls `ClearReadOnlyFields()` after successful JSON unmarshaling and
+before `ConvertToInternal(nil)`. Supplied `readOnly` fields are discarded rather
+than converted or persisted: resource `id`, `type`, `systemData`, provisioning
+state, status/conditions where exposed, cluster API/console/issuer URLs and DNS
+`baseDomain`, and managed-identity principal/tenant IDs and user-assigned identity
+client/principal IDs. `name` is retained for the existing request-path mismatch
+check; persisted resource identity still comes from the request path. JSON decode
+errors retain their existing handling; clearing does not bypass unmarshaling.
+
+Deployment preflight applies the same clearing before conversion for all three
+resource types. It retains `name` for resource routing and restores `type` from
+the preflight envelope before validation; it does not persist resources.
+
+Writable customer inputs and their defaulting/validation are unchanged, including
+DNS `baseDomainPrefix`, external-auth issuer URL/client IDs, and managed-identity
+type/resource-ID selections. The frontend still generates resource metadata,
+operation records, active-operation references and initial `Accepted` provisioning
+state. Backend controllers remain authoritative for observed endpoints, resolved
+identity values and status. This is preventive create-input handling, not a repair
+or migration of existing Cosmos documents; PUT-update/PATCH read-only preservation
+is unchanged.
+
 ### PUT Subscription
 
 **Path:** `PUT /subscriptions/{subscriptionId}`
@@ -104,7 +143,7 @@ The helper-package move does not change endpoint ownership or transactional boun
 
 | Object | Fields Written |
 |--------|---------------|
-| `Subscription` | <ul><li>All fields from request body (`State`, `Properties.*`)</li><li>On create: `CosmosMetadata.ResourceID`, `PartitionKey`</li><li>On replace: preserves `CosmosMetadata` from existing doc</li></ul> |
+| `Subscription` | <ul><li>Writable fields from request body (`State`, `Properties.*`)</li><li>Supplied `CosmosMetadata` is zeroed after unmarshal, before deriving `ResourceID` and `PartitionKey` from the request path</li><li>On create: server-owned storage metadata</li><li>On replace: preserves `CosmosMetadata` from existing doc, including its ETag</li></ul> |
 
 Side effect: if `State == Deleted`, calls `DeleteAllResourcesInSubscription` which
 transitively deletes all clusters (and their children) via transactional batches.
@@ -119,7 +158,7 @@ transitively deletes all clusters (and their children) via transactional batches
 
 | Object | Fields Written |
 |--------|---------------|
-| `HCPOpenShiftCluster` | <ul><li>All `CustomerProperties.*` from request body (unmarshaled, converted to internal, `EnsureDefaults()` applied)</li><li>`TrackedResource.ID` (from URL resource ID)</li><li>`TrackedResource.Name` (from URL resource ID)</li><li>`TrackedResource.Type` (from URL resource ID)</li><li>`TrackedResource.Location` = `azureLocation`</li><li>`Tags`</li><li>`SystemData.CreatedAt`, `SystemData.CreatedBy`, `SystemData.CreatedByType`</li><li>`SystemData.LastModifiedAt`, `SystemData.LastModifiedBy`, `SystemData.LastModifiedByType`</li><li>`CosmosMetadata.ResourceID`, `CosmosMetadata.PartitionKey`</li><li>`ServiceProviderProperties.ManagedIdentitiesDataPlaneIdentityURL` (from `X-Ms-Identity-Url` header)</li><li>`Identity.UserAssignedIdentities` (cleared then rebuilt via `completeClusterIdentity` from `CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ControlPlaneOperators` and `.ServiceManagedIdentity`)</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`ServiceProviderProperties.ProvisioningState` = `Accepted`</li></ul> |
+| `HCPOpenShiftCluster` | <ul><li>`CustomerProperties.*` from request body (unmarshaled, read-only fields cleared before conversion to internal, `EnsureDefaults()` applied)</li><li>`TrackedResource.ID` (from URL resource ID)</li><li>`TrackedResource.Name` (from URL resource ID)</li><li>`TrackedResource.Type` (from URL resource ID)</li><li>`TrackedResource.Location` = `azureLocation`</li><li>`Tags`</li><li>`SystemData.CreatedAt`, `SystemData.CreatedBy`, `SystemData.CreatedByType`</li><li>`SystemData.LastModifiedAt`, `SystemData.LastModifiedBy`, `SystemData.LastModifiedByType`</li><li>`CosmosMetadata.ResourceID`, `CosmosMetadata.PartitionKey`</li><li>`ServiceProviderProperties.ManagedIdentitiesDataPlaneIdentityURL` (from `X-Ms-Identity-Url` header)</li><li>`Identity.UserAssignedIdentities` (cleared then rebuilt via `completeClusterIdentity` from `CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ControlPlaneOperators` and `.ServiceManagedIdentity`, without supplied client/principal IDs)</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`ServiceProviderProperties.ProvisioningState` = `Accepted`</li></ul> |
 | `Operation` | <ul><li>`Request` = `Create`</li><li>`ExternalID` = cluster ARM resource ID</li><li>`InternalID` = empty</li><li>`Status` = `Accepted`</li><li>`TenantID` (from `X-Ms-Home-Tenant-Id` header)</li><li>`ClientID` (from `X-Ms-Client-Object-Id` header)</li><li>`NotificationURI` (from `X-Ms-Async-Notification-Uri` header)</li><li>`StartTime` = now</li><li>`LastTransitionTime` = now</li><li>`OperationID` = generated ARM resource ID</li><li>`ResourceID` = generated ARM resource ID</li><li>`ClientRequestID`, `CorrelationRequestID` (from correlation data)</li></ul> |
 
 ---
@@ -145,7 +184,7 @@ transitively deletes all clusters (and their children) via transactional batches
 
 | Object | Fields Written |
 |--------|---------------|
-| `HCPOpenShiftCluster` | <ul><li>`CustomerProperties.*` (old resource used as base, PATCH body overlaid, then converted to internal)</li><li>`Tags` (nil in request = keep old; non-nil = replace)</li><li>`SystemData.LastModifiedAt`, `LastModifiedBy`, `LastModifiedByType`</li><li>Read-only fields copied from old via `CopyReadOnlyClusterValues`: `TrackedResource`, `CosmosMetadata`, `Identity`, `ServiceProviderProperties`, `Status`</li><li>`Identity.UserAssignedIdentities` (cleared then rebuilt via `completeClusterIdentity` with old identity data)</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`ServiceProviderProperties.ProvisioningState` = `Accepted`</li></ul> |
+| `HCPOpenShiftCluster` | <ul><li>`CustomerProperties.*` (old resource used as base, PATCH body overlaid, then converted to internal; `Platform.ContainerRegistry` dispatched to CS via `clusterUpdateDispatchConfig` for day-2 set/change/clear)</li><li>`Tags` (nil in request = keep old; non-nil = replace)</li><li>`SystemData.LastModifiedAt`, `LastModifiedBy`, `LastModifiedByType`</li><li>Read-only fields copied from old via `CopyReadOnlyClusterValues`: `TrackedResource`, `CosmosMetadata`, `Identity`, `ServiceProviderProperties`, `Status`</li><li>`Identity.UserAssignedIdentities` (cleared then rebuilt via `completeClusterIdentity` with old identity data)</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`ServiceProviderProperties.ProvisioningState` = `Accepted`</li></ul> |
 | `Operation` | <ul><li>`Request` = `Update`</li><li>`ExternalID` = cluster ARM resource ID</li><li>`InternalID` = empty</li><li>`Status` = `Accepted`</li><li>`TenantID`, `ClientID`, `NotificationURI`</li></ul> |
 
 ---
@@ -176,7 +215,7 @@ transitively deletes all clusters (and their children) via transactional batches
 
 | Object | Fields Written |
 |--------|---------------|
-| `HCPOpenShiftClusterNodePool` | <ul><li>All `Properties.*` from request body (unmarshaled, converted to internal, `EnsureDefaults()` applied)</li><li>`TrackedResource.ID`, `TrackedResource.Name`, `TrackedResource.Type`, `TrackedResource.Location`</li><li>`Tags`, `SystemData`</li><li>`CosmosMetadata.ResourceID`, `CosmosMetadata.PartitionKey`</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`Properties.ProvisioningState` = `Accepted`</li></ul> |
+| `HCPOpenShiftClusterNodePool` | <ul><li>Writable `Properties.*` from request body (unmarshaled, read-only fields cleared before conversion to internal, `EnsureDefaults()` applied)</li><li>`TrackedResource.ID`, `TrackedResource.Name`, `TrackedResource.Type`, `TrackedResource.Location`</li><li>`Tags`, `SystemData`</li><li>`CosmosMetadata.ResourceID`, `CosmosMetadata.PartitionKey`</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`Properties.ProvisioningState` = `Accepted`</li></ul> |
 | `Operation` | <ul><li>`Request` = `Create`</li><li>`ExternalID` = node pool ARM resource ID</li><li>`InternalID` = empty</li><li>`Status` = `Accepted`</li><li>`TenantID`, `ClientID`, `NotificationURI`</li></ul> |
 
 ---
@@ -216,7 +255,7 @@ transitively deletes all clusters (and their children) via transactional batches
 
 | Object | Fields Written |
 |--------|---------------|
-| `HCPOpenShiftClusterExternalAuth` | <ul><li>All `Properties.*` from request body (unmarshaled, converted to internal, `EnsureDefaults()` applied)</li><li>`ProxyResource.ID`, `ProxyResource.Name`, `ProxyResource.Type`</li><li>`SystemData`</li><li>`CosmosMetadata.ResourceID`, `CosmosMetadata.PartitionKey`</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`Properties.ProvisioningState` = `Accepted`</li></ul> |
+| `HCPOpenShiftClusterExternalAuth` | <ul><li>Writable `Properties.*` from request body (unmarshaled, read-only fields cleared before conversion to internal, `EnsureDefaults()` applied)</li><li>`ProxyResource.ID`, `ProxyResource.Name`, `ProxyResource.Type`</li><li>`SystemData`</li><li>`CosmosMetadata.ResourceID`, `CosmosMetadata.PartitionKey`</li><li>`ServiceProviderProperties.ActiveOperationID` = new operation's `ResourceID.Name`</li><li>`Properties.ProvisioningState` = `Accepted`</li></ul> |
 | `Operation` | <ul><li>`Request` = `Create`</li><li>`ExternalID` = external auth ARM resource ID</li><li>`InternalID` = empty</li><li>`Status` = `Accepted`</li></ul> |
 
 ---
@@ -312,8 +351,8 @@ No writes to Cosmos Resources container.
 
 ## 2. Complete Controller Catalog
 
-The catalog contains **129 entries**: 105 backend instances, 11 fleet controllers,
-three kube-applier controller types, seven management-agent controllers/watchers,
+The catalog contains **131 entries**: 105 backend instances, 12 fleet controllers,
+three kube-applier controller types, eight management-agent controllers/watchers,
 two sessiongate controllers and one shared union-informer controller. Dynamic
 validation and metrics instances are listed individually; dynamically created
 Kubernetes read controllers are described once. Optional, legacy and example
@@ -386,7 +425,7 @@ Requires a service-provider document. Resolves initial and subsequent exact vers
 
 [Source](../backend/pkg/controllers/cluster/placement/placement_controller.go) · **Trigger:** Cluster; 5m resync, explicit 29s retry when no fit exists.
 
-Requires both cached cluster documents, unresolved `Spec.ManagementClusterResourceID`, no deletion timestamp and a nonterminal provisioning state. Reads fleet scheduling policy, `Ready`, `CapacityDataCurrent` and `ScalingDataCurrent`. Selects the eligible management cluster with the most available SWIFT NICs (resource-ID order breaks ties); needs one NIC for SingleReplica and three otherwise. Available capacity subtracts the greater of observed usage/requests, plus reservations for not-ready and pending HCPs, from the scale ceiling. CPU/memory and aggregate HCP requirements are not selection criteria yet.
+Requires both cached cluster documents, unresolved `Spec.ManagementClusterResourceID`, no deletion timestamp and a nonterminal provisioning state. Reads fleet scheduling policy, `Ready`, `CapacityDataCurrent` and `ScalingDataCurrent`. Selects the eligible management cluster with the most available SWIFT NICs (resource-ID order breaks ties); needs zero NICs for non-SWIFT HCPs (`CustomerProperties.Platform.VnetIntegrationSubnetID` is nil), one for SWIFT SingleReplica and three for other SWIFT HCPs. Available capacity subtracts the greater of observed usage/requests, plus reservations for not-ready and pending HCPs, from the scale ceiling. Existing `NotReadyResourceIDs` and `PendingAssignedClusters` reservations use the same per-HCP networking-mode and control-plane-availability rules, conservatively reserving three NICs when the HCP cannot be read from the cache. Zero-NIC requests still require eligible management clusters with nonnegative NIC headroom and retain pending assignment records. CPU/memory and aggregate HCP requirements are not selection criteria yet.
 
 Reserves `ManagementClusterScheduling.Status.PendingAssignedClusters` before replacing `ServiceProviderCluster` with both `Spec.ManagementClusterResourceID` and `Status.Placement.Conditions[CapacityAvailable]=True`. If no fit exists, records False for known blockers/exhaustion or Unknown for incomplete evaluation and enqueues a retry after 29s. The create-operation poller owns the overall deadline and customer-visible failure.
 
@@ -456,7 +495,7 @@ Reads mirrored Kubernetes content and updates service-provider cluster `Status.H
 
 [Source](../backend/pkg/controllers/cluster/properties/cluster_properties_sync.go) · **Trigger:** Cluster; 5m.
 
-Reads Cluster Service and synchronizes cluster service-provider API/console/DNS endpoints and issuer URL. Does not submit a Cluster Service configuration change.
+Reads mirrored HostedCluster state and synchronizes cluster service-provider API/console URLs, DNS base domain and issuer URL. These values are not taken from create request bodies. Does not submit a Cluster Service configuration change.
 
 #### ClusterBaseDomainPrefixSync
 
@@ -504,7 +543,7 @@ Uses `Spec.BackupState`, placement and namespaces to reconcile Velero schedule A
 
 [Source](../backend/pkg/controllers/cluster/backups/key_rotation_controller.go) · **Trigger:** Cluster and mirrored reads; 5m.
 
-Observes encryption-key rotation and backup state, creates Velero Backup ApplyDesires/ReadDesires, and records completion/cleanup state. Retains completed backups until their TTL.
+Observes encryption-key rotation and backup state, creates Velero Backup ApplyDesires/ReadDesires, and records completion/cleanup state. Leaves completed backups for Velero TTL cleanup. During cluster deletion, directly purges its desires without deleting Backup CRs; [BackupCleanup](#backupcleanup) may request earlier deletion after the HostedCluster disappears.
 
 ### Backend: cluster deletion and operations
 
@@ -886,6 +925,12 @@ Reads Azure compute usage/limits and cached SKU information to validate node-poo
 
 Reads worker/integration subnets and NSG rules and evaluates required connectivity; does not change the rules. Writes the corresponding service-provider `Status.Validations` condition; no Azure mutation.
 
+#### ClusterValidationContainerRegistryPullCredentialsPermissionValidation
+
+[Source](../backend/pkg/utils/validationutils/container_registry_pull_credentials_permission_validation.go) · **Trigger:** Cluster; 1m; result-based retry.
+
+Validates that the CAPZ control-plane operator identity has `Microsoft.ManagedIdentity/userAssignedIdentities/assign/action` permission on the customer's container registry pull managed identity. Skipped if no pull MI is configured; fails if pull MI is in a different subscription than the cluster (cross-subscription not yet supported). Uses Azure CheckAccess V2 API to verify permission. Writes the corresponding service-provider `Status.Validations` condition; no Azure mutation.
+
 ### Backend: billing, repair, diagnostics and caches
 
 #### CreateBillingDoc
@@ -965,12 +1010,6 @@ Logs management-cluster Cosmos and kube-applier snapshots; no domain mutation.
 [Source](../backend/pkg/controllers/datadump/dump_subscription_non_cluster.go) · **Trigger:** Subscription; 5m, 4m cooldown.
 
 Logs subscription-scoped documents outside cluster subtrees; no domain mutation.
-
-#### DoNothingExample
-
-[Source](../backend/pkg/controllers/example/do_nothing.go) · **Trigger:** Subscription sweep.
-
-Registered example that performs no domain work; participates in controller logging/metrics.
 
 #### FPAVirtualMachineResourceSKUsCachedReader
 
@@ -1084,6 +1123,12 @@ Aggregates current CapacityReports with ready HCPs into fleet HCPResourceRequire
 
 Reads Azure Monitor workspace utilization and current metrics-container limits, then raises Azure ingestion limits when thresholds require it. Mutates Azure Monitor accounts/metricsContainers through REST; no Cosmos domain write.
 
+#### NodePoolController
+
+[Source](../fleet/pkg/controllers/nodepool/controller.go) · **Trigger:** Management-cluster informer, stamp key; 30m resync. Registered only when `fleet.nodePoolPlanning.profile` is set.
+
+Shadow observer. Resolves the configured tier profile into a desired AKS node pool set using cached SKU metadata and per-family subscription vCPU quota, projects the live agent pools of the management cluster's AKS cluster, then simulates the planner's convergence sequence (create, scale, freeze, drain, delete) against a preserved capacity floor and logs the resulting trace. Waits while the cluster carries the provisioning marker or is not `Succeeded`. Performs no ARM writes, no Cosmos write, and no scheduling-capacity change; `aks-cluster-create` retains ownership of node pool mutation.
+
 ### Kube-applier and shared informer management
 
 #### ApplyDesireController
@@ -1111,6 +1156,22 @@ Copies target content or absence/error into ReadDesire status/conditions in Cosm
 Adds/removes per-management-cluster Cosmos informer sets as fleet inventory changes. Provides the union listers used by backend/fleet; no domain mutation.
 
 ### Management-agent controllers and watchers
+
+#### BackupCleanup
+
+[Source](../mgmt-agent/pkg/controller/backupcleanup/controller.go) - [Startup](../mgmt-agent/cmd/options.go). Registered unconditionally, runs under leader election after all three informer caches sync; no Cosmos reads or writes, including controller-status records.
+
+**Trigger:** `velero/<backup>` keys from Backup add/delete/resource-version changes and HostedCluster add/delete events for recognized backups in that HC namespace. BackupRepository add/delete or changes to preservation/namespace/storage-location association rescan all cached backups; maintenance-status-only updates do not. Startup also enqueues all backups. Velero informers include all Backups and BackupRepositories in `velero`, without label filters or periodic resync; HC updates (including the shared informer's 10m resync) do not enqueue. Pending work polls after 1m; errors use rate-limited retries. DeleteBackupRequests, DataUploads, Restores and DataDownloads have no informer here.
+
+**Recognition and gates:** Live-reads the Backup; requires a nonempty label-valid UID, `spec.storageLocation`, a valid HCP cluster ARM resource ID in `azure.microsoft.com/hcp-cluster-azure-resource-id`, and exactly the two ARO namespaces (either order): HC namespace matching `^ocm-[a-z][a-z0-9]{0,9}-[a-z0-9]{32}$` and a DNS-label-valid control-plane namespace formed as `<hcNamespace>-<suffix>` with a DNS-label-valid suffix. See the [backup builder](../internal/backup/backup.go). Nonconforming backups are left for operator intervention; no HC name is guessed from the suffix. Any HC in the HC namespace, even terminating, preserves the backup. Only a successful, complete live HC list with no items authorizes cleanup, never an informer cache miss or API error.
+
+Presence of `mgmt-agent.aro-hcp.azure.com/preserve-backup`, regardless of value, opts out a Backup or a BackupRepository whose `spec.volumeNamespace` matches either namespace and whose `spec.backupStorageLocation` matches the backup. Repository protection is checked before scanning requests or operations; protected backups wait for informer events without polling. Before each mutation, rechecks the Backup UID/resourceVersion/scope/phase, repository opt-outs and HC absence using live reads; incomplete lists do not authorize mutation.
+
+Backup phases `Completed`, `PartiallyFailed`, `Failed`, `FailedValidation` and `Deleting` permit cleanup. DataUploads are selected by `velero.io/backup-name` using Velero's normalized backup name, not by UID. Restores match `spec.backupName`, or, while that field is empty, `spec.scheduleName` matching the Backup's `velero.io/schedule-name` label; pending schedule-selected restores therefore protect candidate backups. Restores must be `Completed`, `PartiallyFailed`, `Failed` or `FailedValidation`, but even terminal Restores can leave active DataDownloads. Downloads match an associated Restore's name/UID labels or the same source namespace (HC or control-plane) and backup storage location, including when the Restore is gone. Uploads/downloads must be `Completed`, `Failed` or `Canceled`; missing/unknown phases are active and defer cleanup.
+
+**Effects and completion:** Creates a deterministic UID-derived `DeleteBackupRequest` in `velero` with `spec.backupName` and Velero backup-name/UID labels, without a Backup owner reference. Velero, not mgmt-agent, deletes the Backup and its associated backup data. Existing requests are polled; conflicting requests cause error retries. If its matching request is `Processed` but the Backup remains, deletes that request with UID/resourceVersion preconditions, then rechecks eligibility before recreating it on a later pass. A live Backup GET returning NotFound ends work for that key; request success or elapsed time does not prove repository GC completed.
+
+Never deletes Backups directly, BackupRepositories, blob prefixes or repository data. Repositories remain for Velero/Kopia maintenance. This background cleanup is independent of ARM deletion completion and backup TTL. Opt-outs cannot cancel requests already handed to Velero; labels are not a server-side UID fence (Velero resolves `spec.backupName`), and live rechecks cannot eliminate concurrent name reuse or new HCs/opt-outs/operations.
 
 #### SwiftNICController
 
@@ -1179,12 +1240,13 @@ The DataplaneController registers ready session credentials, owner and backend A
 | Azure managed resource group | [EnsureManagedResourceGroup](#ensuremanagedresourcegroup) creates; [CleanOrphanedClusterManagedResourceGroup](#cleanorphanedclustermanagedresourcegroup) deletes confirmed orphans only in readwrite mode | Pending reference is persisted before creation; provisioning success confirms it. Normal deletion relies on external teardown; EnsureManagedResourceGroup only observes absence and clears references. |
 | Azure deny assignments | [ClusterDenyAssignment](#clusterdenyassignment) gets/creates/updates/deletes stale assignments | Tracks pending/confirmed IDs. Cluster creation requires no pending entries, a nonempty confirmed list and `EarliestRecheckTime` when enabled. Cluster deletion skips direct assignment cleanup; resource-group deletion cascades. |
 | Azure role assignments | [IdentityRoleAssignments](#identityroleassignments) gets and creates missing assignments | Persists intent before PUT; later GET confirms existence. Old confirmed assignments are retained. Cluster creation requires a nonempty confirmed list and no pending assignments. |
-| Azure identities, VM SKUs, quota, NSGs and access checks | Identity/validation controllers and SKU cache **observe** | Store resolved identities, validation conditions or memory cache; these checks do not create identities, change NSGs or raise quota. |
+| Azure identities, VM SKUs, quota, NSGs, container registry pull MI access and access checks | Identity/validation controllers and SKU cache **observe** | Store resolved identities, validation conditions or memory cache; these checks do not create identities, change NSGs, raise quota or modify managed identities. [ClusterValidationContainerRegistryPullCredentialsPermissionValidation](#clustervalidationcontainerregistrypullcredentialspermissionvalidation) checks CAPZ assign/action permission on pull MI using CheckAccess V2. |
 | Azure VMSS NICs / AKS pool ceilings | [SwiftNICController](#swiftniccontroller) and [ManagementClusterScaleCeilingReportingController](#managementclusterscaleceilingreportingcontroller) **observe** | The former changes Kubernetes Node capacity; the latter writes Cosmos scheduling capacity. Neither changes Azure VM/pool size. |
 | Azure Monitor metrics-container ingestion limits | [AMWIngestionScaling](#amwingestionscaling) reads utilization and updates Azure limits | Periodic fleet controller, outside any single cluster's lifecycle. |
 | Cluster Service cluster/node pool/external auth | Create, update-dispatch, upgrade and delete-dispatch controllers call the external API | ID clearers observe 404; operation pollers observe completion. [ClusterServiceMatchingClusters](#clusterservicematchingclusters) also deletes aged, live-rechecked orphan clusters. |
 | Cluster Service provision shards / Maestro consumers | Fleet registration controllers ensure external registrations | Fleet management-cluster conditions record readiness for placement. Maestro/work-agent and HyperShift are external components, not repository controllers in this catalog. |
 | Kubernetes desired manifests | [ApplyDesireController](#applydesirecontroller) applies/deletes objects | Backend `ClusterResources`, backup and credential controllers write intent documents. An ApplyDesire **Delete request** executes a Kubernetes deletion; removal of the Cosmos intent alone does not. |
+| Velero Backups, DeleteBackupRequests and BackupRepositories | [BackupCleanup](#backupcleanup) creates deletion requests and deletes its processed requests for retry; external Velero performs backup/data deletion and Kopia maintenance | Live HC absence, recognized backup scope, terminal phases, no active uploads/restores/downloads and no matching opt-outs gate requests. No Cosmos writes or direct Backup/repository/blob deletion. Backup absence ends reconciliation, not repository GC; repositories are retained and ARM deletion does not wait for this work. |
 | Shared-ingress router Service | External management-cluster provisioning creates the Service/load balancer | [EnsureSharedIngressReadDesireController](#ensuresharedingressreaddesirecontroller) creates observation intent; [SharedIngressReportingController](#sharedingressreportingcontroller) mirrors IPs and availability into Fleet. Admin management-cluster responses expose those IPs; these controllers do not create ingress resources. |
 | Kubernetes observation | [ReadDesireKubernetesController](#readdesirekubernetescontroller) reads targets | Writes mirrored Cosmos status; never provisions the observed target. The manager and union controller maintain the watches. |
 | Kubernetes CapacityReport, Node labels/capacity, monitoring objects | Management-agent controllers | Direct Kubernetes writes; fleet consumes mirrored capacity. [node-health](#node-health) labels/annotates detected SWIFTv2 failures and emits events; mitigation is outside this controller. [capacity-reporting](#capacity-reporting) preserves zero resource quantities and atomically replaces the HCP readiness grouping. |
@@ -1273,6 +1335,8 @@ The [operation poller](../backend/pkg/controllers/cluster/operations/operation_c
 
 [ClusterResources](../backend/pkg/controllers/clusterresources/cluster_resources_controller.go) first drops its tagged ApplyDesire documents, stopping their reconciliation without deleting their Kubernetes targets. [Delete dispatch](../backend/pkg/controllers/cluster/deletion/cluster_cluster_service_delete_dispatch_controller.go) waits for that intent cleanup before calling Cluster Service DELETE. External components then tear down Kubernetes and Azure resources. [Child cleanup](../backend/pkg/controllers/cluster/deletion/cluster_child_resources_cleanup_controller.go) waits for resource and credential children, and preserves owned ApplyDesires for their controllers and removes provider state only after managed-resource-group references, Maestro readonly bundles and cluster-scoped desires clear. [Managed-resource-group reconciliation](../backend/pkg/controllers/cluster/azureresources/managed_resource_group_controller.go) only observes deletion; it does not issue it. The optional orphan-group cleaner is a background repair path, not a prerequisite for typical deletion.
 
+The separate [BackupCleanup](../mgmt-agent/pkg/controller/backupcleanup/controller.go) branch starts only after live reads confirm no HC remains in the recognized backup's HC namespace, not merely a deletion timestamp. All backup/operation/opt-out gates in its [catalog entry](#backupcleanup) must also pass. It requests Velero deletion without waiting for TTL; pending work polls and processed requests with a remaining Backup are retried. [KeyRotationBackup](../backend/pkg/controllers/cluster/backups/key_rotation_controller.go) only purges its Cosmos desires during cluster deletion. Neither ARM success nor Backup absence proves Kopia GC completion; BackupRepositories remain for maintenance, and this branch does not gate the ARM result.
+
 ### Node pool create
 
 [Full PNG](diagrams/controller-flows/nodepool-create.png) · [Graphviz source](diagrams/controller-flows/nodepool-create.dot)
@@ -1340,7 +1404,8 @@ actors and use optimistic concurrency; retries must re-read on conflict.
 | Cluster `PendingClusterServiceID` / `ClusterServiceID` | [Pending ID assignment](#clusterpendingclusterserviceidassign) reserves the ID. [Cluster creation](#clusterclusterservicecreate) confirms the external ID and clears pending. The [ID clearer](#clusterdeletionclusterserviceidclearer) clears confirmed ID only after external absence. Node-pool/external-auth create and clear controllers similarly share their confirmed-ID fields. |
 | `ClusterServiceDeletionTimestamp` | Each delete dispatcher stamps completion of dispatch/creation-race handling; cleanup also requires the confirmed ID cleared. It is not a timestamp of all Azure/Kubernetes deletion. |
 | Cluster `ClusterUID`, `BillingDocumentCosmosID`; Billing document `DeletionTime` | [BackfillClusterUID](#backfillclusteruid) repairs UID using billing as input. [CreateBillingDoc](#createbillingdoc) creates billing and links it. [ClusterDeletionController](#clusterdeletioncontroller) and [OrphanedBillingCleanup](#orphanedbillingcleanup) mark billing deleted. |
-| Cluster `Identity.UserAssignedIdentities` | Frontend supplies identity intent; [ClusterIdentitySync](#clusteridentitysync) fills resolved identity fields. Azure identities themselves are not created by that syncer. |
+| Cluster `ServiceProviderProperties.API.URL`, `.Console.URL`, `.DNS.BaseDomain`, `.Platform.IssuerURL` | [ClusterPropertiesSync](#clusterpropertiessync) writes observed values. Frontend clears supplied values on create rather than persisting them; updates preserve stored values. |
+| Cluster `Identity.UserAssignedIdentities` | Frontend supplies identity intent without create-body client/principal IDs; [ClusterIdentitySync](#clusteridentitysync) fills resolved identity fields. Updates preserve stored resolved values. Azure identities themselves are not created by that syncer. |
 | Cluster/node-pool `Status.ActiveVersions` | [ControlPlaneActiveVersions](#controlplaneactiveversions) writes distinct major.minor cluster versions; [NodePoolActiveVersions](#nodepoolactiveversions) writes full node-pool versions. The 2026-10-01-preview API returns these stored observations through `properties.status.activeVersions`; customer configuration remains separately owned. |
 | ARM Degraded / RequirementsValid conditions | Resource-specific aggregators combine Controller or service-provider validation conditions. A validation failure and a reconcile error are separate signals. |
 
@@ -1362,6 +1427,7 @@ actors and use optimistic concurrency; retries must re-read on conflict.
 | `Status.Validations` | Each registered validation writes its own condition in the service-provider cluster or node pool; requirements aggregators consume the set. |
 | Cluster `Status.HostedClusterNamespace`, `ControlPlaneNamespace`, `ServingCABundle` | [ServiceProviderClusterPropertiesSync](#serviceproviderclusterpropertiessync) fills these from mirrored reads. Credentials and create-operation completion wait on them. |
 | Cluster `Spec.BackupState` | Admin backup PATCH writes Enabled/Paused; [BackupSchedule](#backupschedule) reconciles Velero intent. Mirrored Kubernetes status reports results separately. |
+| Velero deletion intent / repository ownership | Management-agent [BackupCleanup](#backupcleanup) directly creates `DeleteBackupRequest.spec.backupName` and retries its processed requests; Velero owns Backup/data deletion. Backup/repository preservation annotations gate new cleanup requests, not already-issued requests or Velero TTL. BackupRepositories remain for Kopia maintenance; no Cosmos field records cleanup or repository GC completion. |
 | `ApplyDesire` / `ReadDesire` | Backend/fleet writers own desired content/targets; kube-applier owns execution/observation status. Credential cleanup and stale-resource cleanup during live ClusterResources reconciliation use Delete intents and wait. During whole-cluster deletion, ClusterResources drops its intent documents directly; external components own Kubernetes teardown. |
 | Kubernetes CapacityReport | Management-agent [capacity-reporting](#capacity-reporting) server-side applies status, preserving zero CPU/memory/SWIFT-NIC quantities and replacing `hostedControlPlanes` atomically. Kube-applier mirrors it; fleet updates scheduling and resource-requirement documents only from current observations. Collection failures retain the previous payload while setting ReportCurrent=False. |
 

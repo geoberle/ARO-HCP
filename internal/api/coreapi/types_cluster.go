@@ -207,6 +207,7 @@ type CustomerDNSProfile struct {
 
 // ServiceProviderDNSProfile represents the DNS configuration of the cluster.
 type ServiceProviderDNSProfile struct {
+	// Written by: ClusterPropertiesSync
 	BaseDomain string `json:"baseDomain,omitempty"`
 }
 
@@ -223,6 +224,7 @@ type NetworkProfile struct {
 // ServiceProviderConsoleProfile represents a cluster web console configuration.
 // Visibility for the entire struct is "read".
 type ServiceProviderConsoleProfile struct {
+	// Written by: ClusterPropertiesSync
 	URL string `json:"url,omitempty"`
 }
 
@@ -233,6 +235,7 @@ type CustomerAPIProfile struct {
 }
 
 type ServiceProviderAPIProfile struct {
+	// Written by: ClusterPropertiesSync
 	URL string `json:"url,omitempty"`
 }
 
@@ -242,7 +245,9 @@ type CustomerIngressProfile struct {
 }
 
 // CustomerPlatformProfile represents the Azure platform configuration.
-// Visibility for (almost) the entire struct is "read create".
+// Most fields are "read create" (set at creation, immutable afterwards).
+// The exception is ContainerRegistry, which is day-2 mutable (Read/Create/Update)
+// and written by both PUT and PATCH.
 type CustomerPlatformProfile struct {
 	ManagedResourceGroup    string                         `json:"managedResourceGroup,omitempty"`
 	SubnetID                *azcorearm.ResourceID          `json:"subnetId,omitempty"`
@@ -250,9 +255,19 @@ type CustomerPlatformProfile struct {
 	OutboundType            metadataapi.OutboundType       `json:"outboundType,omitempty"`
 	NetworkSecurityGroupID  *azcorearm.ResourceID          `json:"networkSecurityGroupId,omitempty"`
 	OperatorsAuthentication OperatorsAuthenticationProfile `json:"operatorsAuthentication,omitempty"`
+	// Written by: Frontend PUT/PATCH Cluster
+	ContainerRegistry ContainerRegistryProfile `json:"containerRegistry,omitzero"`
+}
+
+// ContainerRegistryProfile represents Azure Container Registry pull
+// configuration for the cluster.
+type ContainerRegistryProfile struct {
+	// Written by: Frontend PUT Cluster (Create), Frontend PATCH Cluster (Update)
+	PullManagedIdentity *azcorearm.ResourceID `json:"pullManagedIdentity,omitempty"`
 }
 
 type ServiceProviderPlatformProfile struct {
+	// Written by: ClusterPropertiesSync
 	IssuerURL string `json:"issuerUrl,omitempty"`
 }
 

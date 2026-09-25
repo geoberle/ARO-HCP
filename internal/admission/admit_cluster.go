@@ -236,7 +236,7 @@ func mutateClusterExperimentalFeatures(_ context.Context, admissionContext *Clus
 	var errs field.ErrorList
 
 	// Reject unrecognized experimental tags.
-	knownTags := sets.New(metadataapi.TagClusterSingleReplica, metadataapi.TagClusterSizeOverride, metadataapi.TagClusterCPOImageOverride, metadataapi.TagClusterControlPlaneExactVersion, metadataapi.TagClusterMaxCreationDuration, metadataapi.TagClusterMaxDeletionDuration)
+	knownTags := sets.New(metadataapi.TagClusterSingleReplica, metadataapi.TagClusterSizeOverride, metadataapi.TagClusterCPOImageOverride, metadataapi.TagClusterControlPlaneExactVersion, metadataapi.TagClusterMaxCreationDuration, metadataapi.TagClusterMaxDeletionDuration, metadataapi.TagClusterDisableSwift)
 	for k := range tags {
 		if strings.HasPrefix(strings.ToLower(k), metadataapi.ExperimentalClusterTagPrefix) && !knownTags.Has(strings.ToLower(k)) {
 			errs = append(errs, field.Invalid(tagsPath.Key(k), k, "unrecognized experimental tag"))
@@ -288,6 +288,8 @@ func mutateClusterExperimentalFeatures(_ context.Context, admissionContext *Clus
 	// The control-plane-exact-version tag is handled entirely by
 	// mutateClusterControlPlaneExactVersion (which also reconciles it against
 	// version.id), so it is intentionally not translated here.
+	// disable-swift is validated against networking in validation.ValidateCluster;
+	// subnet absence is its source of truth, with no ExperimentalFeatures field.
 
 	if len(errs) > 0 {
 		return errs
@@ -440,7 +442,62 @@ func admitClusterPlatform(ctx context.Context, admissionContext *ClusterAdmissio
 	errs = append(errs, admitClusterManagedResourceGroupName(ctx, admissionContext, op, fldPath, newObj)...)
 	errs = append(errs, admitClusterSubnetResourceID(ctx, admissionContext, op, fldPath, newObj)...)
 	errs = append(errs, admitClusterNetworkSecurityGroupResourceID(ctx, admissionContext, op, fldPath, newObj)...)
+	errs = append(errs, admitClusterContainerRegistryPullManagedIdentity(ctx, admissionContext, op, fldPath.Child("containerRegistry", "managedIdentity"), &newObj.ContainerRegistry)...)
 	return errs
+}
+
+// minContainerRegistryPullMIVersion is the minimum OCP version whose CPO
+// supports the kubelet credential provider for ACR pull via managed identity.
+var minContainerRegistryPullMIVersion = semver.Version{Major: 4, Minor: 22}
+
+// admitClusterContainerRegistryPullManagedIdentity rejects containerRegistry
+// configuration when the cluster version does not support it (< 4.22).
+func admitClusterContainerRegistryPullManagedIdentity(_ context.Context, admissionContext *ClusterAdmissionContext, _ operation.Operation, fldPath *field.Path, newObj *coreapi.ContainerRegistryProfile) field.ErrorList {
+	if newObj.PullManagedIdentity == nil {
+		return nil
+	}
+
+	// Gate on the cluster's OpenShift version regardless of whether this is a
+	// create or an update. When the backend has mirrored observed active
+	// control-plane versions onto the ServiceProviderCluster (an existing
+	// cluster), use the lowest of those — the authoritative running version, and
+	// the conservative choice while an upgrade is in flight. Otherwise (a cluster
+	// not yet reconciled, e.g. on create) fall back to the requested version in
+	// the desired spec.
+	var clusterVersion semver.Version
+	if spc := admissionContext.ServiceProviderCluster; spc != nil {
+		lowest, _ := apihelpers.FindLowestAndHighestClusterVersion(spc.Status.ControlPlaneVersion.ActiveVersions)
+		if lowest != nil {
+			clusterVersion = semver.Version{Major: lowest.Major, Minor: lowest.Minor}
+		} else {
+			// ActiveVersions not yet mirrored by the backend (transient); fall
+			// back to the stored cluster version rather than blocking the request.
+			if admissionContext.OriginalCluster == nil {
+				return field.ErrorList{field.InternalError(fldPath, errors.New("cannot determine cluster version for containerRegistry validation"))}
+			}
+			parsed, err := semver.ParseTolerant(admissionContext.OriginalCluster.CustomerProperties.Version.ID)
+			if err != nil {
+				return field.ErrorList{field.InternalError(fldPath, fmt.Errorf("cannot parse cluster version %q: %w", admissionContext.OriginalCluster.CustomerProperties.Version.ID, err))}
+			}
+			clusterVersion = semver.Version{Major: parsed.Major, Minor: parsed.Minor}
+		}
+	} else {
+		if admissionContext.OriginalCluster == nil {
+			return field.ErrorList{field.InternalError(fldPath, errors.New("cannot validate containerRegistry version requirement"))}
+		}
+		parsed, err := semver.ParseTolerant(admissionContext.OriginalCluster.CustomerProperties.Version.ID)
+		if err != nil {
+			return field.ErrorList{field.InternalError(fldPath, fmt.Errorf("cannot parse cluster version %q: %w", admissionContext.OriginalCluster.CustomerProperties.Version.ID, err))}
+		}
+		clusterVersion = semver.Version{Major: parsed.Major, Minor: parsed.Minor}
+	}
+
+	if clusterVersion.LT(minContainerRegistryPullMIVersion) {
+		return field.ErrorList{field.Invalid(fldPath, newObj.PullManagedIdentity.String(),
+			fmt.Sprintf("containerRegistry requires cluster version %s or above", minContainerRegistryPullMIVersion))}
+	}
+
+	return nil
 }
 
 // admitClusterManagedResourceGroupName ensures the managed resource group name

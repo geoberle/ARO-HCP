@@ -88,11 +88,8 @@ func ValidateCluster(ctx context.Context, op operation.Operation, newCluster, ol
 	// there several resourceIDs that must be verified with respect to this ID.  This is the only level of validation with access to both
 	errs = append(errs, validateResourceIDsAgainstClusterID(ctx, op, newCluster, oldCluster)...)
 
-	// Private KAS requires vnetIntegrationSubnetId to be set.
-	// For API versions v20251223preview and later, vnetIntegrationSubnetId is already
-	// enforced as required during conversion, so this check only has practical effect
-	// for v20240610preview.
-	errs = append(errs, validatePrivateKASRequiresVNetIntegrationSubnetID(ctx, op, newCluster, oldCluster)...)
+	// Subnet requiredness depends on the API version, feature opt-in and visibility.
+	errs = append(errs, validateClusterVNetIntegrationSubnetID(ctx, op, newCluster, oldCluster)...)
 
 	// Private KAS requires OpenShift >= 4.22 (HyperShift gained private API server support in 4.22).
 	errs = append(errs, validatePrivateKASRequiresMinimumVersion(ctx, op, newCluster, oldCluster)...)
@@ -109,15 +106,42 @@ func ValidateCluster(ctx context.Context, op operation.Operation, newCluster, ol
 	return errs
 }
 
-func validatePrivateKASRequiresVNetIntegrationSubnetID(_ context.Context, _ operation.Operation, newCluster, _ *coreapi.HCPOpenShiftCluster) field.ErrorList {
+func validateClusterVNetIntegrationSubnetID(_ context.Context, op operation.Operation, newCluster, _ *coreapi.HCPOpenShiftCluster) field.ErrorList {
 	errs := field.ErrorList{}
+	subnetPath := field.NewPath("customerProperties", "platform", "vnetIntegrationSubnetId")
+	subnet := newCluster.CustomerProperties.Platform.VnetIntegrationSubnetID
+	disableSwift := false
+	if op.HasOption(metadataapi.FeatureExperimentalReleaseFeatures) {
+		for key, value := range newCluster.Tags {
+			if !strings.EqualFold(key, metadataapi.TagClusterDisableSwift) {
+				continue
+			}
+			switch value {
+			case "true":
+				disableSwift = true
+				if subnet != nil {
+					errs = append(errs, field.Invalid(field.NewPath("tags").Key(key), value, "cannot disable SWIFT when customerProperties.platform.vnetIntegrationSubnetId is set"))
+				}
+			case "false":
+			default:
+				errs = append(errs, field.Invalid(field.NewPath("tags").Key(key), value, "must be exactly \"true\" or \"false\""))
+			}
+		}
+	}
 
-	if newCluster.CustomerProperties.API.Visibility == metadataapi.VisibilityPrivate &&
-		newCluster.CustomerProperties.Platform.VnetIntegrationSubnetID == nil {
-		errs = append(errs, field.Required(
-			field.NewPath("customerProperties", "platform", "vnetIntegrationSubnetId"),
-			"required when customerProperties.api.visibility is Private",
-		))
+	if subnet == nil {
+		if newCluster.CustomerProperties.API.Visibility == metadataapi.VisibilityPrivate {
+			errs = append(errs, field.Required(subnetPath, "required when customerProperties.api.visibility is Private"))
+		}
+		customerManaged := newCluster.CustomerProperties.Etcd.DataEncryption.CustomerManaged
+		if customerManaged != nil && customerManaged.Kms != nil && customerManaged.Kms.Visibility == metadataapi.KeyVaultVisibilityPrivate {
+			errs = append(errs, field.Required(subnetPath, "required when customerProperties.etcd.dataEncryption.customerManaged.kms.visibility is Private"))
+		}
+		// UPDATE uses the stored subnet through platform immutability validation,
+		// so legacy/non-SWIFT clusters remain updatable without the tag or AFEC.
+		if op.Type == operation.Create && metadataapi.APIVersionFromOptions(op.Options).GE(metadataapi.APIVersionV20251223Preview) && !disableSwift {
+			errs = append(errs, field.Required(subnetPath, "required unless the disable-swift experimental tag is true and ExperimentalReleaseFeatures is registered"))
+		}
 	}
 
 	return errs
@@ -293,6 +317,7 @@ func validateResourceIDsAgainstClusterID(ctx context.Context, op operation.Opera
 	errs = append(errs, SameSubscription(ctx, op, field.NewPath("customerProperties", "platform", "networkSecurityGroupId"), newCluster.CustomerProperties.Platform.NetworkSecurityGroupID, nil, newCluster.ID.SubscriptionID)...)
 	errs = append(errs, DifferentResourceGroupNameFromResourceID(ctx, op, field.NewPath("customerProperties", "platform", "networkSecurityGroupId"), newCluster.CustomerProperties.Platform.NetworkSecurityGroupID, nil, newCluster.CustomerProperties.Platform.ManagedResourceGroup)...)
 	errs = append(errs, SameSubscription(ctx, op, field.NewPath("customerProperties", "platform", "vnetIntegrationSubnetId"), newCluster.CustomerProperties.Platform.VnetIntegrationSubnetID, nil, newCluster.ID.SubscriptionID)...)
+	errs = append(errs, SameSubscription(ctx, op, field.NewPath("customerProperties", "platform", "containerRegistry", "managedIdentity"), newCluster.CustomerProperties.Platform.ContainerRegistry.PullManagedIdentity, nil, newCluster.ID.SubscriptionID)...)
 
 	for operatorName, operatorIdentity := range newCluster.CustomerProperties.Platform.OperatorsAuthentication.UserAssignedIdentities.ControlPlaneOperators {
 		fldPath := field.NewPath("customerProperties", "platform", "operatorsAuthentication", "userAssignedIdentities", "controlPlaneOperators").Key(operatorName)
@@ -371,7 +396,6 @@ func validateClusterCustomerProperties(ctx context.Context, op operation.Operati
 	errs = append(errs, validateCustomerIngressProfile(ctx, op, fldPath.Child("ingress"), &newObj.Ingress, safe.Field(oldObj, toCustomerIngress))...)
 
 	// Platform                CustomerPlatformProfile             `json:"platform,omitempty"`
-	errs = append(errs, immutableByReflect(ctx, op, fldPath.Child("platform"), &newObj.Platform, safe.Field(oldObj, toCustomerPlatform))...)
 	errs = append(errs, validateCustomerPlatformProfile(ctx, op, fldPath.Child("platform"), &newObj.Platform, safe.Field(oldObj, toCustomerPlatform))...)
 
 	//Autoscaling             ClusterAutoscalingProfile   `json:"autoscaling,omitempty"`
@@ -737,9 +761,7 @@ func validateCustomerPlatformProfile(ctx context.Context, op operation.Operation
 	// here would emit the same error twice for the same input.
 
 	// VnetIntegrationSubnetID *azcorearm.ResourceID `json:"vnetIntegrationSubnetId,omitempty"`
-	// vnetIntegrationSubnetId was added in v20251223preview, so it's optional for backwards compatibility
-	// TODO: When we remove the v20240610preview API we should remove the nil check here and add validate.RequiredValue
-	// for vnetIntegrationSubnetId
+	// Requiredness is checked at cluster level; networking is immutable even when nil.
 	errs = append(errs, immutableByReflect(ctx, op, fldPath.Child("vnetIntegrationSubnetId"), newObj.VnetIntegrationSubnetID, safe.Field(oldObj, toPlatformVnetIntegrationSubnetID))...)
 	if newObj.VnetIntegrationSubnetID != nil {
 		errs = append(errs, RestrictedResourceIDWithResourceGroup(ctx, op, fldPath.Child("vnetIntegrationSubnetId"), newObj.VnetIntegrationSubnetID, safe.Field(oldObj, toPlatformVnetIntegrationSubnetID), "Microsoft.Network/virtualNetworks/subnets")...)
@@ -765,8 +787,27 @@ func validateCustomerPlatformProfile(ctx context.Context, op operation.Operation
 	errs = append(errs, immutableByReflect(ctx, op, fldPath.Child("operatorsAuthentication"), &newObj.OperatorsAuthentication, safe.Field(oldObj, toPlatformOperatorsAuthentication))...)
 	errs = append(errs, validateOperatorsAuthenticationProfile(ctx, op, fldPath.Child("operatorsAuthentication"), &newObj.OperatorsAuthentication, safe.Field(oldObj, toPlatformOperatorsAuthentication))...)
 
+	//ContainerRegistry       ContainerRegistryProfile             `json:"containerRegistry,omitzero"`
+	errs = append(errs, validateContainerRegistryPullCredentials(ctx, op, fldPath.Child("containerRegistry", "managedIdentity"), newObj.ContainerRegistry.PullManagedIdentity, safe.Field(oldObj, toPlatformContainerRegistryPullMI), newObj.ManagedResourceGroup)...)
+
 	return errs
 }
+
+func validateContainerRegistryPullCredentials(ctx context.Context, op operation.Operation, fldPath *field.Path, newObj *azcorearm.ResourceID, oldObj *azcorearm.ResourceID, managedResourceGroup string) field.ErrorList {
+	errs := field.ErrorList{}
+	if newObj == nil {
+		return errs
+	}
+	errs = append(errs, RestrictedResourceIDWithResourceGroup(ctx, op, fldPath, newObj, oldObj, "Microsoft.ManagedIdentity/userAssignedIdentities")...)
+	errs = append(errs, DifferentResourceGroupNameFromResourceID(ctx, op, fldPath, newObj, oldObj, managedResourceGroup)...)
+	return errs
+}
+
+var (
+	toPlatformContainerRegistryPullMI = func(oldObj *coreapi.CustomerPlatformProfile) *azcorearm.ResourceID {
+		return oldObj.ContainerRegistry.PullManagedIdentity
+	}
+)
 
 var (
 	toServiceProviderPlatformProfileIssuerURL = func(oldObj *coreapi.ServiceProviderPlatformProfile) *string { return &oldObj.IssuerURL }

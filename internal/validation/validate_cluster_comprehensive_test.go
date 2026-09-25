@@ -906,7 +906,8 @@ func TestValidateClusterCreate(t *testing.T) {
 			},
 		},
 		{
-			name: "vnet integration subnet is optional - create",
+			name:      "vnet integration subnet is optional in 20240610 - create",
+			opOptions: []string{metadataapi.APIVersionOption(metadataapi.APIVersionV20240610Preview)},
 			cluster: func() *coreapi.HCPOpenShiftCluster {
 				c := createValidCluster()
 				// vnetIntegrationSubnetId is optional for backwards compatibility
@@ -958,6 +959,17 @@ func TestValidateClusterCreate(t *testing.T) {
 			}(),
 			expectErrors: []utils.ExpectedError{
 				{Message: "must belong to the same VNet as subnetId", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
+			},
+		},
+		{
+			name: "container registry pull MI in different subscription - create",
+			cluster: func() *coreapi.HCPOpenShiftCluster {
+				c := createValidCluster()
+				c.CustomerProperties.Platform.ContainerRegistry.PullManagedIdentity = metadataapi.Must(azcorearm.ParseResourceID("/subscriptions/different-sub/resourceGroups/customer-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/acr-pull"))
+				return c
+			}(),
+			expectErrors: []utils.ExpectedError{
+				{Message: "must be in the same Azure subscription", FieldPath: "customerProperties.platform.containerRegistry.managedIdentity"},
 			},
 		},
 		{
@@ -1551,7 +1563,6 @@ func TestValidateClusterUpdate(t *testing.T) {
 				return c
 			}(),
 			expectErrors: []utils.ExpectedError{
-				{Message: "field is immutable", FieldPath: "customerProperties.platform"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.operatorsAuthentication"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.operatorsAuthentication.userAssignedIdentities"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.operatorsAuthentication.userAssignedIdentities.controlPlaneOperators"},
@@ -1785,7 +1796,6 @@ func TestValidateClusterUpdate(t *testing.T) {
 				return c
 			}(),
 			expectErrors: []utils.ExpectedError{
-				{Message: "field is immutable", FieldPath: "customerProperties.platform"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.subnetId"},
 				{Message: "must be in the same Azure subscription", FieldPath: "customerProperties.platform.subnetId"},
 				{Message: "must be in the same Azure subscription", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
@@ -1804,7 +1814,6 @@ func TestValidateClusterUpdate(t *testing.T) {
 				return c
 			}(),
 			expectErrors: []utils.ExpectedError{
-				{Message: "field is immutable", FieldPath: "customerProperties.platform"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
 				{Message: "must belong to the same VNet as subnetId", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
 				{Message: "must be in the same Azure subscription", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
@@ -1823,7 +1832,6 @@ func TestValidateClusterUpdate(t *testing.T) {
 				return c
 			}(),
 			expectErrors: []utils.ExpectedError{
-				{Message: "field is immutable", FieldPath: "customerProperties.platform"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
 			},
 		},
@@ -1866,7 +1874,6 @@ func TestValidateClusterUpdate(t *testing.T) {
 				return c
 			}(),
 			expectErrors: []utils.ExpectedError{
-				{Message: "field is immutable", FieldPath: "customerProperties.platform"},
 				{Message: "field is immutable", FieldPath: "customerProperties.platform.vnetIntegrationSubnetId"},
 			},
 		},

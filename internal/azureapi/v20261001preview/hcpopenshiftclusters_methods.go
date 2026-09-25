@@ -41,6 +41,45 @@ func (h *HcpOpenShiftCluster) NewExternal() any {
 	return &HcpOpenShiftCluster{}
 }
 
+func (h *HcpOpenShiftCluster) ClearReadOnlyFields() {
+	if h == nil {
+		return
+	}
+	// Keep Name for path mismatch validation and preflight routing.
+	h.ID = nil
+	h.Type = nil
+	h.SystemData = nil
+	clearReadOnlyIdentityFields(h.Identity)
+	if h.Properties != nil {
+		h.Properties.ProvisioningState = nil
+		h.Properties.Console = nil
+		h.Properties.Status = nil
+		if h.Properties.DNS != nil {
+			h.Properties.DNS.BaseDomain = nil
+		}
+		if h.Properties.API != nil {
+			h.Properties.API.URL = nil
+		}
+		if h.Properties.Platform != nil {
+			h.Properties.Platform.IssuerURL = nil
+		}
+	}
+}
+
+func clearReadOnlyIdentityFields(identity *generated.ManagedServiceIdentity) {
+	if identity == nil {
+		return
+	}
+	identity.PrincipalID = nil
+	identity.TenantID = nil
+	for _, assigned := range identity.UserAssignedIdentities {
+		if assigned != nil {
+			assigned.ClientID = nil
+			assigned.PrincipalID = nil
+		}
+	}
+}
+
 func SetDefaultValuesCluster(obj *HcpOpenShiftCluster) {
 	if obj.Properties == nil {
 		obj.Properties = &generated.HcpOpenShiftClusterProperties{}
@@ -197,7 +236,17 @@ func newPlatformProfile(from *coreapi.CustomerPlatformProfile, from2 *coreapi.Se
 		OutboundType:            metadataapihelpers.PtrOrNil(generated.OutboundType(from.OutboundType)),
 		NetworkSecurityGroupID:  metadataapihelpers.ResourceIDToStringPtr(from.NetworkSecurityGroupID),
 		OperatorsAuthentication: metadataapihelpers.PtrOrNil(newOperatorsAuthenticationProfile(&from.OperatorsAuthentication)),
+		ContainerRegistry:       newContainerRegistryProfile(from.ContainerRegistry.PullManagedIdentity),
 		IssuerURL:               metadataapihelpers.PtrOrNil(from2.IssuerURL),
+	}
+}
+
+func newContainerRegistryProfile(from *azcorearm.ResourceID) *generated.ContainerRegistryProfile {
+	if from == nil {
+		return nil
+	}
+	return &generated.ContainerRegistryProfile{
+		ManagedIdentity: metadataapihelpers.ResourceIDToStringPtr(from),
 	}
 }
 
@@ -466,12 +515,8 @@ func (c *HcpOpenShiftCluster) ConvertToInternal(existing *coreapi.HCPOpenShiftCl
 			}
 		}
 		if c.Properties.Platform != nil {
-			if c.Properties.Platform.VnetIntegrationSubnetID == nil {
-				// TODO: Remove this check when v20240610preview is removed and
-				// vnetIntegrationSubnetId is enforced via validate.RequiredPointer
-				// in validateCustomerPlatformProfile.
-				errs = append(errs, field.Required(field.NewPath("properties", "platform", "vnetIntegrationSubnetId"), "field cannot be null"))
-			} else if len(*c.Properties.Platform.VnetIntegrationSubnetID) == 0 {
+			// Nil requiredness is feature-aware and checked by cluster validation.
+			if c.Properties.Platform.VnetIntegrationSubnetID != nil && len(*c.Properties.Platform.VnetIntegrationSubnetID) == 0 {
 				errs = append(errs, field.Invalid(field.NewPath("properties", "platform", "vnetIntegrationSubnetId"), "", "field cannot be empty string"))
 			}
 		}
@@ -540,6 +585,8 @@ func (c *HcpOpenShiftCluster) ConvertToInternal(existing *coreapi.HCPOpenShiftCl
 		}
 		if c.Properties.Platform != nil {
 			errs = append(errs, normalizePlatform(field.NewPath("properties", "platform"), c.Properties.Platform, &out.CustomerProperties.Platform, &out.ServiceProviderProperties.Platform)...)
+			errs = append(errs, normalizeContainerRegistry(field.NewPath("properties", "platform", "containerRegistry"), c.Properties.Platform.ContainerRegistry, &out.CustomerProperties.Platform.ContainerRegistry.PullManagedIdentity)...)
+
 		}
 		if c.Properties.Autoscaling != nil {
 			normalizeAutoscaling(c.Properties.Autoscaling, &out.CustomerProperties.Autoscaling)
@@ -567,8 +614,8 @@ func (c *HcpOpenShiftCluster) ConvertToInternal(existing *coreapi.HCPOpenShiftCl
 }
 
 // preserveUnknownClusterFields copies customer-facing fields from existing that
-// this API version doesn't know about. Currently empty — no cross-version
-// customer fields exist yet between v20240610preview and v20260630preview.
+// this API version doesn't know about. Currently empty — v20261001preview is
+// the latest version.
 func preserveUnknownClusterFields(from, to *coreapi.HCPOpenShiftCluster) {
 }
 
@@ -666,6 +713,30 @@ func normalizePlatform(fldPath *field.Path, p *generated.PlatformProfile, out *c
 		out.OperatorsAuthentication = coreapi.OperatorsAuthenticationProfile{}
 	}
 	out2.IssuerURL = metadataapihelpers.Deref(p.IssuerURL)
+
+	return errs
+}
+
+func normalizeContainerRegistry(fldPath *field.Path, p *generated.ContainerRegistryProfile, out **azcorearm.ResourceID) field.ErrorList {
+	errs := field.ErrorList{}
+
+	if p == nil || p.ManagedIdentity == nil {
+		*out = nil
+		return errs
+	}
+
+	mi := strings.TrimSpace(*p.ManagedIdentity)
+	if mi == "" {
+		errs = append(errs, field.Invalid(fldPath.Child("managedIdentity"), *p.ManagedIdentity, "must be a non-empty resource ID or null to clear"))
+		return errs
+	}
+
+	resourceID, err := azcorearm.ParseResourceID(mi)
+	if err != nil {
+		errs = append(errs, field.Invalid(fldPath.Child("managedIdentity"), *p.ManagedIdentity, err.Error()))
+	} else {
+		*out = resourceID
+	}
 
 	return errs
 }

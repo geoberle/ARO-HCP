@@ -41,7 +41,6 @@ import (
 	azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 
 	arohcpv1alpha1 "github.com/openshift-online/ocm-sdk-go/arohcp/v1alpha1"
-	cmv1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
 
 	"github.com/Azure/ARO-HCP/internal/admission"
 	"github.com/Azure/ARO-HCP/internal/api/coreapi"
@@ -327,7 +326,6 @@ func (f *Frontend) ArmResourceActionRequestAdminCredential(writer http.ResponseW
 	if err != nil {
 		return utils.TrackError(err)
 	}
-	apiVersion := metadataapi.APIVersion(versionedInterface.String())
 
 	resourceID, err := utils.ResourceIDFromContext(ctx)
 	if err != nil {
@@ -342,35 +340,36 @@ func (f *Frontend) ArmResourceActionRequestAdminCredential(writer http.ResponseW
 		return utils.TrackError(err)
 	}
 
-	// Starting with v20260901, callers provide a CSR in the request body and we
-	// store it on the Cosmos operation. This lets us distinguish at the operation
-	// level whether the new admin credential API path (CSR-based) or the legacy
-	// Cluster Service break-glass path is in use.
-	var certificateSigningRequest string
-	if apiVersion.GE(metadataapi.APIVersionV20260901Preview) {
-		body, err := BodyFromContext(ctx)
-		if err != nil {
-			return utils.TrackError(err)
-		}
+	// A CSR is mandatory. The admin credential is always issued via the
+	// CSR-based path, so the caller must provide a certificate signing request
+	// in the request body, which we store on the Cosmos operation. Requests with
+	// no body or no CSR are rejected with a validation error instead of silently
+	// taking the legacy Cluster Service break-glass path.
+	body, err := BodyFromContext(ctx)
+	if err != nil {
+		return utils.TrackError(err)
+	}
 
+	var certificateSigningRequest string
+	if len(body) > 0 {
 		credentialRequest, err := versionedInterface.UnmarshalHCPOpenShiftClusterAdminCredentialRequest(body)
 		if err != nil {
 			return utils.TrackError(err)
 		}
+		if credentialRequest != nil {
+			certificateSigningRequest = credentialRequest.CertificateSigningRequest
+		}
+	}
 
-		var errs field.ErrorList
-		csrPath := field.NewPath("certificateSigningRequest")
-		if credentialRequest == nil {
-			errs = append(errs, field.Required(csrPath, ""))
-		} else if credentialRequest.CertificateSigningRequest == "" {
-			errs = append(errs, field.Required(csrPath, ""))
-		} else {
-			errs = append(errs, validateCSRSubject(credentialRequest.CertificateSigningRequest, csrPath)...)
-		}
-		if err := coreapi.CloudErrorFromFieldErrors(errs); err != nil {
-			return err
-		}
-		certificateSigningRequest = credentialRequest.CertificateSigningRequest
+	var errs field.ErrorList
+	csrPath := field.NewPath("certificateSigningRequest")
+	if certificateSigningRequest == "" {
+		errs = append(errs, field.Required(csrPath, ""))
+	} else {
+		errs = append(errs, validateCSRSubject(certificateSigningRequest, csrPath)...)
+	}
+	if err := coreapi.CloudErrorFromFieldErrors(errs); err != nil {
+		return err
 	}
 
 	cluster, err := f.resourcesDBClient.HCPClusters(clusterResourceID.SubscriptionID, clusterResourceID.ResourceGroupName).Get(ctx, clusterResourceID.Name)
@@ -579,6 +578,8 @@ func (f *Frontend) ArmSubscriptionPut(writer http.ResponseWriter, request *http.
 	if err != nil {
 		return coreapi.NewInvalidRequestContentError(err)
 	}
+	// Storage metadata is server-owned, not part of ARM's subscription input.
+	requestSubscription.CosmosMetadata = coreapi.CosmosMetadata{}
 	requestSubscription.ResourceID, err = coreapihelpers.ToSubscriptionResourceID(subscriptionID)
 	if err != nil {
 		return utils.TrackError(err)
@@ -713,6 +714,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 				continue
 			}
 
+			versionedCluster.ClearReadOnlyFields()
 			newInternalCluster, err := versionedCluster.ConvertToInternal(nil)
 			if err != nil {
 				resourceLogger.Info("preflight: failed to convert resource", "error", err.Error())
@@ -721,6 +723,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 			// Backstop for fields unknown to this API version's SetDefaultValues*.
 			// See docs/api-version-defaults-and-storage.md.
 			newInternalCluster.EnsureDefaults()
+			newInternalCluster.Type = preflightResource.Type
 			newInternalCluster.SystemData = ensureSystemData(newInternalCluster.SystemData, nil)
 			// the external type lacks sufficient data to full produce a valid resourceID.  We do that separately here.
 			parts := []string{
@@ -735,7 +738,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 			}
 			op := operation.Operation{
 				Type:    operation.Create,
-				Options: []string{validation.ManagedIdentitiesDataPlaneIdentityURLOptionalOperationOption},
+				Options: append(validation.BuildValidationOptions(subscription.GetRegisteredFeatures(), metadataapi.APIVersion(versionedInterface.String())), validation.ManagedIdentitiesDataPlaneIdentityURLOptionalOperationOption),
 			}
 			admissionContext, ctxErr := f.newClusterAdmissionContext(ctx, op, subscription, newInternalCluster, nil)
 			if ctxErr != nil {
@@ -763,6 +766,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 			}
 
 			// Perform static validation as if for a node pool creation request.
+			versionedNodePool.ClearReadOnlyFields()
 			newInternalNodePool, err := versionedNodePool.ConvertToInternal(nil)
 			if err != nil {
 				resourceLogger.Info("preflight: failed to convert resource", "error", err.Error())
@@ -771,6 +775,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 			// Backstop for fields unknown to this API version's SetDefaultValues*.
 			// See docs/api-version-defaults-and-storage.md.
 			newInternalNodePool.EnsureDefaults()
+			newInternalNodePool.Type = preflightResource.Type
 			// the external type lacks sufficient data to full produce a valid resourceID.  We do that separately here.
 			parts := []string{
 				"/subscriptions", subscriptionID,
@@ -805,6 +810,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 			}
 
 			// Perform static validation as if for an external auth creation request.
+			versionedExternalAuth.ClearReadOnlyFields()
 			newInternalAuth, err := versionedExternalAuth.ConvertToInternal(nil)
 			if err != nil {
 				resourceLogger.Info("preflight: failed to convert resource", "error", err.Error())
@@ -813,6 +819,7 @@ func (f *Frontend) ArmDeploymentPreflight(writer http.ResponseWriter, request *h
 			// Backstop for fields unknown to this API version's SetDefaultValues*.
 			// See docs/api-version-defaults-and-storage.md.
 			newInternalAuth.EnsureDefaults()
+			newInternalAuth.Type = preflightResource.Type
 			newInternalAuth.SystemData = ensureSystemData(newInternalAuth.SystemData, nil)
 			// the external type lacks sufficient data to full produce a valid resourceID.  We do that separately here.
 			parts := []string{
@@ -1045,10 +1052,10 @@ func (f *Frontend) OperationResult(writer http.ResponseWriter, request *http.Req
 
 	var responseBody []byte
 
-	// If the operation carries a SystemAdminCredentialRequest, it used the new
-	// CSR-based admin credential API and the credential is assembled from Cosmos.
-	// Otherwise, fall back to the legacy Cluster Service break-glass credential
-	// path identified by the operation's InternalID kind.
+	// Admin credential requests are always issued via the CSR-based path, so the
+	// credential is assembled from the SystemAdminCredentialRequest stored on the
+	// operation. The legacy Cluster Service break-glass resolution path has been
+	// removed.
 	switch {
 	case operation.SystemAdminCredentialRequest != nil:
 		adminCred, err := f.assembleAdminCredentialFromCosmos(ctx, operation)
@@ -1060,16 +1067,19 @@ func (f *Frontend) OperationResult(writer http.ResponseWriter, request *http.Req
 			return utils.TrackError(err)
 		}
 
-	case operation.InternalID.Kind() == cmv1.BreakGlassCredentialKind:
-		csBreakGlassCredential, err := f.clusterServiceClient.GetBreakGlassCredential(ctx, operation.InternalID)
-		if err != nil {
-			return utils.TrackError(err)
-		}
-
-		responseBody, err = versionedInterface.MarshalHCPOpenShiftClusterAdminCredential(ocm.ConvertCStoAdminCredential(csBreakGlassCredential))
-		if err != nil {
-			return utils.TrackError(err)
-		}
+	case operation.Request == cosmosstorageutils.OperationRequestSystemAdminCredentialRequest:
+		// This is an admin-credential request operation, but it carries no
+		// SystemAdminCredentialRequest payload (the case above handles the
+		// populated CSR path). Since the legacy Cluster Service break-glass
+		// resolution path has been removed, there is no way to resolve a
+		// credential here. Fail explicitly with an internal error rather than
+		// falling through to the cluster resource branch below, which would
+		// return the wrong (cluster) response shape for a credential request.
+		return coreapi.NewCloudError(
+			http.StatusInternalServerError,
+			coreapi.CloudErrorCodeInternalServerError,
+			"",
+			"admin credential operation is missing its SystemAdminCredentialRequest payload")
 
 	case metadataapi.ResourceTypeEqual(operation.ExternalID.ResourceType, coreapi.ClusterResourceType):
 		resultingInternalCluster, err := f.getInternalClusterFromStorage(ctx, operation.ExternalID)

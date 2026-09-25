@@ -40,6 +40,44 @@ func (h *HcpOpenShiftCluster) NewExternal() any {
 	return &HcpOpenShiftCluster{}
 }
 
+func (h *HcpOpenShiftCluster) ClearReadOnlyFields() {
+	if h == nil {
+		return
+	}
+	// Keep Name for path mismatch validation and preflight routing.
+	h.ID = nil
+	h.Type = nil
+	h.SystemData = nil
+	clearReadOnlyIdentityFields(h.Identity)
+	if h.Properties != nil {
+		h.Properties.ProvisioningState = nil
+		h.Properties.Console = nil
+		if h.Properties.DNS != nil {
+			h.Properties.DNS.BaseDomain = nil
+		}
+		if h.Properties.API != nil {
+			h.Properties.API.URL = nil
+		}
+		if h.Properties.Platform != nil {
+			h.Properties.Platform.IssuerURL = nil
+		}
+	}
+}
+
+func clearReadOnlyIdentityFields(identity *generated.ManagedServiceIdentity) {
+	if identity == nil {
+		return
+	}
+	identity.PrincipalID = nil
+	identity.TenantID = nil
+	for _, assigned := range identity.UserAssignedIdentities {
+		if assigned != nil {
+			assigned.ClientID = nil
+			assigned.PrincipalID = nil
+		}
+	}
+}
+
 func SetDefaultValuesCluster(obj *HcpOpenShiftCluster) {
 	if obj.Properties == nil {
 		obj.Properties = &generated.HcpOpenShiftClusterProperties{}
@@ -394,12 +432,8 @@ func (c *HcpOpenShiftCluster) ConvertToInternal(existing *coreapi.HCPOpenShiftCl
 			}
 		}
 		if c.Properties.Platform != nil {
-			if c.Properties.Platform.VnetIntegrationSubnetID == nil {
-				// TODO: Remove this check when v20240610preview is removed and
-				// vnetIntegrationSubnetId is enforced via validate.RequiredPointer
-				// in validateCustomerPlatformProfile.
-				errs = append(errs, field.Required(field.NewPath("properties", "platform", "vnetIntegrationSubnetId"), "field cannot be null"))
-			} else if len(*c.Properties.Platform.VnetIntegrationSubnetID) == 0 {
+			// Nil requiredness is feature-aware and checked by cluster validation.
+			if c.Properties.Platform.VnetIntegrationSubnetID != nil && len(*c.Properties.Platform.VnetIntegrationSubnetID) == 0 {
 				errs = append(errs, field.Invalid(field.NewPath("properties", "platform", "vnetIntegrationSubnetId"), "", "field cannot be empty string"))
 			}
 		}
@@ -495,6 +529,8 @@ func preserveUnknownClusterFields(from, to *coreapi.HCPOpenShiftCluster) {
 	to.CustomerProperties.Ingress = from.CustomerProperties.Ingress
 	// CryptoRestrictions was added in v2026_06_30_preview
 	to.CustomerProperties.CryptoRestrictions = from.CustomerProperties.CryptoRestrictions
+	// ContainerRegistry was added in v2026_10_01_preview.
+	to.CustomerProperties.Platform.ContainerRegistry = from.CustomerProperties.Platform.ContainerRegistry
 }
 
 func normalizeManagedIdentity(identity *generated.ManagedServiceIdentity) *coreapi.ManagedServiceIdentity {
