@@ -201,7 +201,7 @@ spec:
                   x-kubernetes-int-or-string: true
               hostedControlPlanes:
                 description: >-
-                  Reported as a single atomic unit: the whole object is replaced on every apply, since mgmt-agent is the sole writer and there is no need to track ownership of readyResourceIDs/notReadyResourceIDs individually.
+                  Reported as a single atomic unit: the whole object is replaced on every apply, since mgmt-agent is the sole writer. This removes stale identities and size buckets, including the final named bucket.
                 type: object
                 x-kubernetes-map-type: atomic
                 properties:
@@ -219,6 +219,115 @@ spec:
                     items:
                       type: string
                     x-kubernetes-list-type: set
+                  readyResources:
+                    description: >-
+                      Usage and requests for all HCPs whose Available condition is True, including HCPs without usable size attribution. Absence means not reported, not zero.
+                    type: object
+                    required:
+                    - usage
+                    - requested
+                    properties:
+                      usage:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          # Standard Kubernetes resource.Quantity validation pattern
+                          pattern: "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$"
+                          x-kubernetes-int-or-string: true
+                      requested:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          # Standard Kubernetes resource.Quantity validation pattern
+                          pattern: "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$"
+                          x-kubernetes-int-or-string: true
+                  bySize:
+                    description: >-
+                      HCP populations grouped by the observed HostedCluster size label. HCPs without usable size attribution contribute only to overall accounting.
+                    type: array
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys:
+                    - size
+                    items:
+                      type: object
+                      required:
+                      - size
+                      - resources
+                      properties:
+                        size:
+                          description: >-
+                            Canonical lowercase observed HostedCluster size label value, excluding the reserved name default.
+                          type: string
+                        resources:
+                          description: >-
+                            Usage and requests for all HCPs in this size bucket.
+                          type: object
+                          required:
+                          - usage
+                          - requested
+                          properties:
+                            usage:
+                              type: object
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                # Standard Kubernetes resource.Quantity validation pattern
+                                pattern: "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$"
+                                x-kubernetes-int-or-string: true
+                            requested:
+                              type: object
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                # Standard Kubernetes resource.Quantity validation pattern
+                                pattern: "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$"
+                                x-kubernetes-int-or-string: true
+                        readyResources:
+                          description: >-
+                            Usage and requests for HCPs in this size bucket whose Available condition is True. Absence means not reported, not zero.
+                          type: object
+                          required:
+                          - usage
+                          - requested
+                          properties:
+                            usage:
+                              type: object
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                # Standard Kubernetes resource.Quantity validation pattern
+                                pattern: "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$"
+                                x-kubernetes-int-or-string: true
+                            requested:
+                              type: object
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                # Standard Kubernetes resource.Quantity validation pattern
+                                pattern: "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$"
+                                x-kubernetes-int-or-string: true
+                        readyResourceIDs:
+                          description: >-
+                            ARM resource IDs of HCPs in this size bucket whose Available condition is True.
+                          type: array
+                          items:
+                            type: string
+                          x-kubernetes-list-type: set
+                        notReadyResourceIDs:
+                          description: >-
+                            ARM resource IDs of HCPs in this size bucket whose Available condition is not True or missing.
+                          type: array
+                          items:
+                            type: string
+                          x-kubernetes-list-type: set
               averageHCPResourceUsage:
                 description: >-
                   Average actual resource consumption per ready HCP. Omitted when readyResourceIDs is empty.

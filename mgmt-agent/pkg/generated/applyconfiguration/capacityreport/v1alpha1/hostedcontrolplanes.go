@@ -20,8 +20,7 @@ package v1alpha1
 // with apply.
 //
 // HostedControlPlanes reports the state of HostedControlPlane resources on a
-// management cluster. Counts are derived from the lists: ready = len(readyResourceIDs),
-// notReady = len(notReadyResourceIDs).
+// management cluster.
 type HostedControlPlanesApplyConfiguration struct {
 	// readyResourceIDs lists the ARM resource IDs of HostedControlPlanes whose
 	// Available condition is True.
@@ -29,6 +28,12 @@ type HostedControlPlanesApplyConfiguration struct {
 	// notReadyResourceIDs lists the ARM resource IDs of HostedControlPlanes whose
 	// Available condition is not True or missing.
 	NotReadyResourceIDs []string `json:"notReadyResourceIDs,omitempty"`
+	// readyResources reports usage and requests for all ready HCPs, including
+	// those without usable size attribution. Nil means not reported, not zero.
+	ReadyResources *HCPResourceTotalsApplyConfiguration `json:"readyResources,omitempty"`
+	// bySize groups HCPs by their observed HostedCluster size label. HCPs without
+	// usable size attribution contribute only to the overall population.
+	BySize []HostedControlPlanesBySizeApplyConfiguration `json:"bySize,omitempty"`
 }
 
 // HostedControlPlanesApplyConfiguration constructs a declarative configuration of the HostedControlPlanes type for use with
@@ -53,6 +58,27 @@ func (b *HostedControlPlanesApplyConfiguration) WithReadyResourceIDs(values ...s
 func (b *HostedControlPlanesApplyConfiguration) WithNotReadyResourceIDs(values ...string) *HostedControlPlanesApplyConfiguration {
 	for i := range values {
 		b.NotReadyResourceIDs = append(b.NotReadyResourceIDs, values[i])
+	}
+	return b
+}
+
+// WithReadyResources sets the ReadyResources field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ReadyResources field is set to the value of the last call.
+func (b *HostedControlPlanesApplyConfiguration) WithReadyResources(value *HCPResourceTotalsApplyConfiguration) *HostedControlPlanesApplyConfiguration {
+	b.ReadyResources = value
+	return b
+}
+
+// WithBySize adds the given value to the BySize field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the BySize field.
+func (b *HostedControlPlanesApplyConfiguration) WithBySize(values ...*HostedControlPlanesBySizeApplyConfiguration) *HostedControlPlanesApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithBySize")
+		}
+		b.BySize = append(b.BySize, *values[i])
 	}
 	return b
 }

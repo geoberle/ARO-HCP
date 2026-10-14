@@ -105,6 +105,7 @@ type NodeSKUCapacity struct {
 
 // HostedControlPlanes reports the state of HostedControlPlane resources on a
 // management cluster.
+// +structType=atomic
 type HostedControlPlanes struct {
 	// +optional
 	// +listType=set
@@ -115,6 +116,47 @@ type HostedControlPlanes struct {
 	// +listType=set
 	// notReadyResourceIDs lists the ARM resource IDs of HostedControlPlanes whose
 	// Available condition is not True or missing.
+	NotReadyResourceIDs []string `json:"notReadyResourceIDs,omitempty"`
+
+	// +optional
+	// readyResources reports usage and requests for all ready HCPs, including
+	// those without usable size attribution. Nil means not reported, not zero.
+	ReadyResources *HCPResourceTotals `json:"readyResources,omitempty"`
+
+	// +optional
+	// +listType=map
+	// +listMapKey=size
+	// bySize groups HCPs by their observed HostedCluster size label. HCPs without
+	// usable size attribution contribute only to the overall population.
+	BySize []HostedControlPlanesBySize `json:"bySize,omitempty"`
+}
+
+// HCPResourceTotals reports resource usage and requests for an HCP population.
+type HCPResourceTotals struct {
+	// usage reports actual resource consumption from PodMetrics.
+	Usage corev1.ResourceList `json:"usage"`
+	// requested reports regular-container resource requests in non-terminal pods.
+	Requested corev1.ResourceList `json:"requested"`
+}
+
+// HostedControlPlanesBySize reports HCPs with the same observed HostedCluster size.
+type HostedControlPlanesBySize struct {
+	// size is the canonical lowercase observed label value, excluding default.
+	Size string `json:"size"`
+	// resources reports usage and requests for all HCPs in this size bucket.
+	Resources HCPResourceTotals `json:"resources"`
+	// +optional
+	// readyResources reports usage and requests for ready HCPs in this size
+	// bucket. Nil means not reported, not zero.
+	ReadyResources *HCPResourceTotals `json:"readyResources,omitempty"`
+	// +optional
+	// +listType=set
+	// readyResourceIDs lists ARM resource IDs of HCPs whose Available condition is True.
+	ReadyResourceIDs []string `json:"readyResourceIDs,omitempty"`
+	// +optional
+	// +listType=set
+	// notReadyResourceIDs lists ARM resource IDs of HCPs whose Available condition
+	// is not True or missing.
 	NotReadyResourceIDs []string `json:"notReadyResourceIDs,omitempty"`
 }
 
