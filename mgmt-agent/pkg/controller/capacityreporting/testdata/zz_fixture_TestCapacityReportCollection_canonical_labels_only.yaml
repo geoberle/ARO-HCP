@@ -12,8 +12,7 @@ status:
     type: ReportCurrent
   hostedControlPlanes:
     bySize:
-    - readyResourceIDs:
-      - /subscriptions/sub/resourceGroups/rg/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-5
+    - readyCount: 1
       readyResources:
         requested:
           aro.openshift.io/swift-nic: "1"
@@ -41,6 +40,15 @@ status:
     - /subscriptions/sub/resourceGroups/rg/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-4
     - /subscriptions/sub/resourceGroups/rg/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-5
     readyResources:
+      requested:
+        aro.openshift.io/swift-nic: "6"
+        cpu: "12"
+        memory: "0"
+      usage:
+        aro.openshift.io/swift-nic: "6"
+        cpu: "6"
+        memory: "0"
+    resources:
       requested:
         aro.openshift.io/swift-nic: "6"
         cpu: "12"

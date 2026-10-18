@@ -220,6 +220,7 @@ func (c *CapacityReportController) buildCapacityReportUpdate(ctx context.Context
 	resources := collectHCPResources(pods, allMetrics.Items, collectHCPNamespaces(hcps))
 	totals, readyTotals := sumHCPResources(hcps, resources)
 	hostedControlPlanes := collectHostedControlPlanes(hcps, c.namespaceLister)
+	hostedControlPlanes.Resources = &totals
 	hostedControlPlanes.ReadyResources = &readyTotals
 
 	bySize := map[string][]*hypershiftv1beta1.HostedControlPlane{}
@@ -230,10 +231,9 @@ func (c *CapacityReportController) buildCapacityReportUpdate(ctx context.Context
 	}
 	for size, sizedHCPs := range bySize {
 		sizedTotals, sizedReadyTotals := sumHCPResources(sizedHCPs, resources)
-		identities := collectHostedControlPlanes(sizedHCPs, c.namespaceLister)
 		hostedControlPlanes.BySize = append(hostedControlPlanes.BySize, capacityreportv1alpha1.HostedControlPlanesBySize{
-			Size: size, Resources: sizedTotals, ReadyResources: &sizedReadyTotals,
-			ReadyResourceIDs: identities.ReadyResourceIDs, NotReadyResourceIDs: identities.NotReadyResourceIDs,
+			Size: size, Resources: sizedTotals, ReadyResources: sizedReadyTotals,
+			ReadyCount: countReadyResourceIDs(sizedHCPs, c.namespaceLister),
 		})
 	}
 	slices.SortFunc(hostedControlPlanes.BySize, func(a, b capacityreportv1alpha1.HostedControlPlanesBySize) int {
@@ -256,9 +256,13 @@ func retainStatusWithCondition(existingStatus capacityreportv1alpha1.CapacityRep
 	statusConfig := applyconfigv1alpha1.CapacityReportStatus().
 		WithConditions(condition).
 		WithNodes(nodeConfigs...).
-		WithUsage(existingStatus.Usage).
-		WithRequested(existingStatus.Requested).
 		WithHostedControlPlanes(hostedControlPlanesApplyConfiguration(existingStatus.HostedControlPlanes))
+	if existingStatus.Usage != nil {
+		statusConfig.WithUsage(existingStatus.Usage)
+	}
+	if existingStatus.Requested != nil {
+		statusConfig.WithRequested(existingStatus.Requested)
+	}
 
 	if existingStatus.LastReportedAt != nil {
 		statusConfig = statusConfig.WithLastReportedAt(*existingStatus.LastReportedAt)
@@ -319,6 +323,9 @@ func hostedControlPlanesApplyConfiguration(population capacityreportv1alpha1.Hos
 	config := applyconfigv1alpha1.HostedControlPlanes().
 		WithReadyResourceIDs(population.ReadyResourceIDs...).
 		WithNotReadyResourceIDs(population.NotReadyResourceIDs...)
+	if population.Resources != nil {
+		config.WithResources(resourceTotalsApplyConfiguration(*population.Resources))
+	}
 	if population.ReadyResources != nil {
 		config.WithReadyResources(resourceTotalsApplyConfiguration(*population.ReadyResources))
 	}
@@ -326,18 +333,15 @@ func hostedControlPlanesApplyConfiguration(population capacityreportv1alpha1.Hos
 		sizedConfig := applyconfigv1alpha1.HostedControlPlanesBySize().
 			WithSize(bucket.Size).
 			WithResources(resourceTotalsApplyConfiguration(bucket.Resources)).
-			WithReadyResourceIDs(bucket.ReadyResourceIDs...).
-			WithNotReadyResourceIDs(bucket.NotReadyResourceIDs...)
-		if bucket.ReadyResources != nil {
-			sizedConfig.WithReadyResources(resourceTotalsApplyConfiguration(*bucket.ReadyResources))
-		}
+			WithReadyResources(resourceTotalsApplyConfiguration(bucket.ReadyResources)).
+			WithReadyCount(bucket.ReadyCount)
 		config.WithBySize(sizedConfig)
 	}
 	return config
 }
 
-func resourceTotalsApplyConfiguration(totals capacityreportv1alpha1.HCPResourceTotals) *applyconfigv1alpha1.HCPResourceTotalsApplyConfiguration {
-	return applyconfigv1alpha1.HCPResourceTotals().WithUsage(totals.Usage).WithRequested(totals.Requested)
+func resourceTotalsApplyConfiguration(totals capacityreportv1alpha1.HostedControlPlaneResourceTotals) *applyconfigv1alpha1.HostedControlPlaneResourceTotalsApplyConfiguration {
+	return applyconfigv1alpha1.HostedControlPlaneResourceTotals().WithUsage(totals.Usage).WithRequested(totals.Requested)
 }
 
 func (c *CapacityReportController) observedSize(hcp *hypershiftv1beta1.HostedControlPlane) string {
@@ -421,8 +425,8 @@ func newZeroFloorResourceList() corev1.ResourceList {
 
 // collectHCPResources measures each namespace once, independently of its size
 // attribution and readiness. Pod request semantics match the overall report.
-func collectHCPResources(pods []*corev1.Pod, metrics []metricsv1beta1.PodMetrics, namespaces sets.Set[string]) map[string]capacityreportv1alpha1.HCPResourceTotals {
-	resources := make(map[string]capacityreportv1alpha1.HCPResourceTotals, len(namespaces))
+func collectHCPResources(pods []*corev1.Pod, metrics []metricsv1beta1.PodMetrics, namespaces sets.Set[string]) map[string]capacityreportv1alpha1.HostedControlPlaneResourceTotals {
+	resources := make(map[string]capacityreportv1alpha1.HostedControlPlaneResourceTotals, len(namespaces))
 	for namespace := range namespaces {
 		resources[namespace] = newResourceTotals()
 	}
@@ -451,11 +455,11 @@ func collectHCPResources(pods []*corev1.Pod, metrics []metricsv1beta1.PodMetrics
 	return resources
 }
 
-func newResourceTotals() capacityreportv1alpha1.HCPResourceTotals {
-	return capacityreportv1alpha1.HCPResourceTotals{Usage: newZeroFloorResourceList(), Requested: newZeroFloorResourceList()}
+func newResourceTotals() capacityreportv1alpha1.HostedControlPlaneResourceTotals {
+	return capacityreportv1alpha1.HostedControlPlaneResourceTotals{Usage: newZeroFloorResourceList(), Requested: newZeroFloorResourceList()}
 }
 
-func sumHCPResources(hcps []*hypershiftv1beta1.HostedControlPlane, resources map[string]capacityreportv1alpha1.HCPResourceTotals) (capacityreportv1alpha1.HCPResourceTotals, capacityreportv1alpha1.HCPResourceTotals) {
+func sumHCPResources(hcps []*hypershiftv1beta1.HostedControlPlane, resources map[string]capacityreportv1alpha1.HostedControlPlaneResourceTotals) (capacityreportv1alpha1.HostedControlPlaneResourceTotals, capacityreportv1alpha1.HostedControlPlaneResourceTotals) {
 	total, ready := newResourceTotals(), newResourceTotals()
 	namespaces, readyNamespaces := sets.New[string](), sets.New[string]()
 	for _, hcp := range hcps {
@@ -482,6 +486,23 @@ func collectHCPNamespaces(hcps []*hypershiftv1beta1.HostedControlPlane) sets.Set
 		namespaces.Insert(hcp.Namespace)
 	}
 	return namespaces
+}
+
+func countReadyResourceIDs(hcps []*hypershiftv1beta1.HostedControlPlane, namespaceLister corelisters.NamespaceLister) int32 {
+	readyResourceIDs := sets.New[string]()
+	for _, hcp := range hcps {
+		if !isHCPAvailable(hcp) {
+			continue
+		}
+		namespace, err := namespaceLister.Get(hcp.Namespace)
+		if err != nil {
+			continue
+		}
+		if resourceID := namespace.Annotations[controllerutils.HcpClusterAzureResourceIdAnnotation]; len(resourceID) > 0 {
+			readyResourceIDs.Insert(resourceID)
+		}
+	}
+	return int32(readyResourceIDs.Len())
 }
 
 func collectHostedControlPlanes(hcps []*hypershiftv1beta1.HostedControlPlane, namespaceLister corelisters.NamespaceLister) capacityreportv1alpha1.HostedControlPlanes {

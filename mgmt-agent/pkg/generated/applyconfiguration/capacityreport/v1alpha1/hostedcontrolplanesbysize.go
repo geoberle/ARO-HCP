@@ -20,19 +20,21 @@ package v1alpha1
 // with apply.
 //
 // HostedControlPlanesBySize reports HCPs with the same observed HostedCluster size.
+// Resource totals measure the bucket's HCP workloads; readyCount counts distinct
+// ready ARM resource IDs, not measured HCP objects.
 type HostedControlPlanesBySizeApplyConfiguration struct {
 	// size is the canonical lowercase observed label value, excluding default.
 	Size *string `json:"size,omitempty"`
 	// resources reports usage and requests for all HCPs in this size bucket.
-	Resources *HCPResourceTotalsApplyConfiguration `json:"resources,omitempty"`
+	Resources *HostedControlPlaneResourceTotalsApplyConfiguration `json:"resources,omitempty"`
 	// readyResources reports usage and requests for ready HCPs in this size
-	// bucket. Nil means not reported, not zero.
-	ReadyResources *HCPResourceTotalsApplyConfiguration `json:"readyResources,omitempty"`
-	// readyResourceIDs lists ARM resource IDs of HCPs whose Available condition is True.
-	ReadyResourceIDs []string `json:"readyResourceIDs,omitempty"`
-	// notReadyResourceIDs lists ARM resource IDs of HCPs whose Available condition
-	// is not True or missing.
-	NotReadyResourceIDs []string `json:"notReadyResourceIDs,omitempty"`
+	// bucket. This object is required even when no HCP in the bucket is ready;
+	// an empty ready population is reported with zero resource totals.
+	ReadyResources *HostedControlPlaneResourceTotalsApplyConfiguration `json:"readyResources,omitempty"`
+	// readyCount counts distinct ARM resource IDs of HCPs in this size bucket
+	// whose Available condition is True, using exact, case-sensitive string
+	// equality. It is zero when no HCP in the bucket is ready.
+	ReadyCount *int32 `json:"readyCount,omitempty"`
 }
 
 // HostedControlPlanesBySizeApplyConfiguration constructs a declarative configuration of the HostedControlPlanesBySize type for use with
@@ -52,7 +54,7 @@ func (b *HostedControlPlanesBySizeApplyConfiguration) WithSize(value string) *Ho
 // WithResources sets the Resources field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Resources field is set to the value of the last call.
-func (b *HostedControlPlanesBySizeApplyConfiguration) WithResources(value *HCPResourceTotalsApplyConfiguration) *HostedControlPlanesBySizeApplyConfiguration {
+func (b *HostedControlPlanesBySizeApplyConfiguration) WithResources(value *HostedControlPlaneResourceTotalsApplyConfiguration) *HostedControlPlanesBySizeApplyConfiguration {
 	b.Resources = value
 	return b
 }
@@ -60,27 +62,15 @@ func (b *HostedControlPlanesBySizeApplyConfiguration) WithResources(value *HCPRe
 // WithReadyResources sets the ReadyResources field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ReadyResources field is set to the value of the last call.
-func (b *HostedControlPlanesBySizeApplyConfiguration) WithReadyResources(value *HCPResourceTotalsApplyConfiguration) *HostedControlPlanesBySizeApplyConfiguration {
+func (b *HostedControlPlanesBySizeApplyConfiguration) WithReadyResources(value *HostedControlPlaneResourceTotalsApplyConfiguration) *HostedControlPlanesBySizeApplyConfiguration {
 	b.ReadyResources = value
 	return b
 }
 
-// WithReadyResourceIDs adds the given value to the ReadyResourceIDs field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the ReadyResourceIDs field.
-func (b *HostedControlPlanesBySizeApplyConfiguration) WithReadyResourceIDs(values ...string) *HostedControlPlanesBySizeApplyConfiguration {
-	for i := range values {
-		b.ReadyResourceIDs = append(b.ReadyResourceIDs, values[i])
-	}
-	return b
-}
-
-// WithNotReadyResourceIDs adds the given value to the NotReadyResourceIDs field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the NotReadyResourceIDs field.
-func (b *HostedControlPlanesBySizeApplyConfiguration) WithNotReadyResourceIDs(values ...string) *HostedControlPlanesBySizeApplyConfiguration {
-	for i := range values {
-		b.NotReadyResourceIDs = append(b.NotReadyResourceIDs, values[i])
-	}
+// WithReadyCount sets the ReadyCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ReadyCount field is set to the value of the last call.
+func (b *HostedControlPlanesBySizeApplyConfiguration) WithReadyCount(value int32) *HostedControlPlanesBySizeApplyConfiguration {
+	b.ReadyCount = &value
 	return b
 }

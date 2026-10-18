@@ -17,13 +17,12 @@
 package applyconfiguration
 
 import (
-	runtime "k8s.io/apimachinery/pkg/runtime"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
-	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
-
 	v1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/apis/capacityreport/v1alpha1"
 	capacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration/capacityreport/v1alpha1"
 	internal "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration/internal"
+	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 )
 
 // ForKind returns an apply configuration type for the given GroupVersionKind, or nil if no
@@ -35,8 +34,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &capacityreportv1alpha1.CapacityReportApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("CapacityReportStatus"):
 		return &capacityreportv1alpha1.CapacityReportStatusApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("HCPResourceTotals"):
-		return &capacityreportv1alpha1.HCPResourceTotalsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HostedControlPlaneResourceTotals"):
+		return &capacityreportv1alpha1.HostedControlPlaneResourceTotalsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HostedControlPlanes"):
 		return &capacityreportv1alpha1.HostedControlPlanesApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HostedControlPlanesBySize"):

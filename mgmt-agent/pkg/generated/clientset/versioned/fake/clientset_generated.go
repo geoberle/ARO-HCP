@@ -17,17 +17,16 @@
 package fake
 
 import (
+	applyconfiguration "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration"
+	clientset "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned"
+	mgmtagentv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1"
+	fakemgmtagentv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1/fake"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/testing"
-
-	applyconfiguration "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration"
-	clientset "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned"
-	mgmtagentv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1"
-	fakemgmtagentv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1/fake"
 )
 
 // NewSimpleClientset returns a clientset that will respond with the provided objects.

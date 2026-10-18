@@ -12,10 +12,7 @@ status:
     type: ReportCurrent
   hostedControlPlanes:
     bySize:
-    - notReadyResourceIDs:
-      - /subscriptions/sub-3/resourceGroups/rg-3/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-c
-      readyResourceIDs:
-      - /subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-a
+    - readyCount: 1
       readyResources:
         requested:
           memory: 6Gi
@@ -37,6 +34,11 @@ status:
         memory: 6Gi
       usage:
         memory: 3Gi
+    resources:
+      requested:
+        memory: 8Gi
+      usage:
+        memory: 4Gi
   lastReportedAt: "2024-12-31T23:59:30Z"
   nodes:
   - allocatable:

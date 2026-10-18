@@ -17,11 +17,10 @@
 package fake
 
 import (
-	gentype "k8s.io/client-go/gentype"
-
 	v1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/apis/capacityreport/v1alpha1"
 	capacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration/capacityreport/v1alpha1"
 	typedcapacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1"
+	gentype "k8s.io/client-go/gentype"
 )
 
 // fakeCapacityReports implements CapacityReportInterface

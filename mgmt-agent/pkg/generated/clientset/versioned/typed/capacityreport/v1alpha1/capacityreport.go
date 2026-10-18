@@ -19,14 +19,13 @@ package v1alpha1
 import (
 	context "context"
 
+	capacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/apis/capacityreport/v1alpha1"
+	applyconfigurationcapacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration/capacityreport/v1alpha1"
+	scheme "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	gentype "k8s.io/client-go/gentype"
-
-	capacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/apis/capacityreport/v1alpha1"
-	applyconfigurationcapacityreportv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/applyconfiguration/capacityreport/v1alpha1"
-	scheme "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/scheme"
 )
 
 // CapacityReportsGetter has a method to return a CapacityReportInterface.

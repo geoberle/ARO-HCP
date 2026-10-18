@@ -20,27 +20,31 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
-// HCPResourceTotalsApplyConfiguration represents a declarative configuration of the HCPResourceTotals type for use
+// HostedControlPlaneResourceTotalsApplyConfiguration represents a declarative configuration of the HostedControlPlaneResourceTotals type for use
 // with apply.
 //
-// HCPResourceTotals reports resource usage and requests for an HCP population.
-type HCPResourceTotalsApplyConfiguration struct {
-	// usage reports actual resource consumption from PodMetrics.
+// HostedControlPlaneResourceTotals reports resource usage and requests for an HCP
+// population. Successful collections include CPU, memory and aro.openshift.io/swift-nic
+// in both maps, with zero values when the measured population is empty.
+type HostedControlPlaneResourceTotalsApplyConfiguration struct {
+	// usage reports consumption from PodMetrics, except aro.openshift.io/swift-nic
+	// usage, which equals its requested allocation.
 	Usage *v1.ResourceList `json:"usage,omitempty"`
-	// requested reports regular-container resource requests in non-terminal pods.
+	// requested sums regular-container requests for Pending and Running pods,
+	// excluding init containers and pod overhead.
 	Requested *v1.ResourceList `json:"requested,omitempty"`
 }
 
-// HCPResourceTotalsApplyConfiguration constructs a declarative configuration of the HCPResourceTotals type for use with
+// HostedControlPlaneResourceTotalsApplyConfiguration constructs a declarative configuration of the HostedControlPlaneResourceTotals type for use with
 // apply.
-func HCPResourceTotals() *HCPResourceTotalsApplyConfiguration {
-	return &HCPResourceTotalsApplyConfiguration{}
+func HostedControlPlaneResourceTotals() *HostedControlPlaneResourceTotalsApplyConfiguration {
+	return &HostedControlPlaneResourceTotalsApplyConfiguration{}
 }
 
 // WithUsage sets the Usage field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Usage field is set to the value of the last call.
-func (b *HCPResourceTotalsApplyConfiguration) WithUsage(value v1.ResourceList) *HCPResourceTotalsApplyConfiguration {
+func (b *HostedControlPlaneResourceTotalsApplyConfiguration) WithUsage(value v1.ResourceList) *HostedControlPlaneResourceTotalsApplyConfiguration {
 	b.Usage = &value
 	return b
 }
@@ -48,7 +52,7 @@ func (b *HCPResourceTotalsApplyConfiguration) WithUsage(value v1.ResourceList) *
 // WithRequested sets the Requested field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Requested field is set to the value of the last call.
-func (b *HCPResourceTotalsApplyConfiguration) WithRequested(value v1.ResourceList) *HCPResourceTotalsApplyConfiguration {
+func (b *HostedControlPlaneResourceTotalsApplyConfiguration) WithRequested(value v1.ResourceList) *HostedControlPlaneResourceTotalsApplyConfiguration {
 	b.Requested = &value
 	return b
 }

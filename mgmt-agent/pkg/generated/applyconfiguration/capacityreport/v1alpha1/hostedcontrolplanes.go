@@ -20,7 +20,11 @@ package v1alpha1
 // with apply.
 //
 // HostedControlPlanes reports the state of HostedControlPlane resources on a
-// management cluster.
+// management cluster. Resource totals measure HCP workloads; overall identity lists
+// and per-size ready counts deduplicate ARM resource IDs by exact, case-sensitive
+// string equality, rather than counting measured HCP objects. Legacy reports may
+// omit resources, readyResources and bySize. Failed collections preserve the
+// existing payload, including absent fields.
 type HostedControlPlanesApplyConfiguration struct {
 	// readyResourceIDs lists the ARM resource IDs of HostedControlPlanes whose
 	// Available condition is True.
@@ -28,11 +32,22 @@ type HostedControlPlanesApplyConfiguration struct {
 	// notReadyResourceIDs lists the ARM resource IDs of HostedControlPlanes whose
 	// Available condition is not True or missing.
 	NotReadyResourceIDs []string `json:"notReadyResourceIDs,omitempty"`
+	// resources reports usage and requests for all HCPs, including those without
+	// usable size attribution. Nil means not reported, not zero. Successful
+	// collections by new collectors always include this object, even with no HCPs,
+	// and dual-write the same totals to the legacy status.usage and status.requested.
+	Resources *HostedControlPlaneResourceTotalsApplyConfiguration `json:"resources,omitempty"`
 	// readyResources reports usage and requests for all ready HCPs, including
 	// those without usable size attribution. Nil means not reported, not zero.
-	ReadyResources *HCPResourceTotalsApplyConfiguration `json:"readyResources,omitempty"`
-	// bySize groups HCPs by their observed HostedCluster size label. HCPs without
-	// usable size attribution contribute only to the overall population.
+	// Successful collections by new collectors always include this object, even
+	// with no ready HCPs.
+	ReadyResources *HostedControlPlaneResourceTotalsApplyConfiguration `json:"readyResources,omitempty"`
+	// bySize groups HCPs by the associated HostedCluster's observed
+	// hypershift.openshift.io/hosted-cluster-size label. The HCP's
+	// hypershift.openshift.io/cluster annotation identifies that HC as namespace/name.
+	// Missing associations or noncanonical/reserved labels contribute only to overall
+	// accounting, so named buckets are not exhaustive. If no HCP has usable attribution,
+	// this list is omitted or empty; that alone does not indicate a legacy report.
 	BySize []HostedControlPlanesBySizeApplyConfiguration `json:"bySize,omitempty"`
 }
 
@@ -62,10 +77,18 @@ func (b *HostedControlPlanesApplyConfiguration) WithNotReadyResourceIDs(values .
 	return b
 }
 
+// WithResources sets the Resources field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Resources field is set to the value of the last call.
+func (b *HostedControlPlanesApplyConfiguration) WithResources(value *HostedControlPlaneResourceTotalsApplyConfiguration) *HostedControlPlanesApplyConfiguration {
+	b.Resources = value
+	return b
+}
+
 // WithReadyResources sets the ReadyResources field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ReadyResources field is set to the value of the last call.
-func (b *HostedControlPlanesApplyConfiguration) WithReadyResources(value *HCPResourceTotalsApplyConfiguration) *HostedControlPlanesApplyConfiguration {
+func (b *HostedControlPlanesApplyConfiguration) WithReadyResources(value *HostedControlPlaneResourceTotalsApplyConfiguration) *HostedControlPlanesApplyConfiguration {
 	b.ReadyResources = value
 	return b
 }

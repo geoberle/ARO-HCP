@@ -20,11 +20,10 @@ import (
 	fmt "fmt"
 	http "net/http"
 
+	mgmtagentv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
-
-	mgmtagentv1alpha1 "github.com/Azure/ARO-HCP/mgmt-agent/pkg/generated/clientset/versioned/typed/capacityreport/v1alpha1"
 )
 
 type Interface interface {

@@ -16,6 +16,7 @@ package capacityreporting
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -593,22 +594,25 @@ func TestRetainStatusWithCondition(t *testing.T) {
 					corev1.ResourceMemory: resource.MustParse("8Gi"),
 				},
 				HostedControlPlanes: capacityreportv1alpha1.HostedControlPlanes{
-					ReadyResources: &capacityreportv1alpha1.HCPResourceTotals{
+					Resources: &capacityreportv1alpha1.HostedControlPlaneResourceTotals{
+						Usage:     corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")},
+						Requested: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+					},
+					ReadyResources: &capacityreportv1alpha1.HostedControlPlaneResourceTotals{
 						Usage:     corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("3Gi")},
 						Requested: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("6Gi")},
 					},
 					BySize: []capacityreportv1alpha1.HostedControlPlanesBySize{{
 						Size: "small",
-						Resources: capacityreportv1alpha1.HCPResourceTotals{
+						Resources: capacityreportv1alpha1.HostedControlPlaneResourceTotals{
 							Usage:     corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")},
 							Requested: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
 						},
-						ReadyResources: &capacityreportv1alpha1.HCPResourceTotals{
+						ReadyResources: capacityreportv1alpha1.HostedControlPlaneResourceTotals{
 							Usage:     corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("3Gi")},
 							Requested: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("6Gi")},
 						},
-						ReadyResourceIDs:    []string{"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-a"},
-						NotReadyResourceIDs: []string{"/subscriptions/sub-3/resourceGroups/rg-3/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-c"},
+						ReadyCount: 1,
 					}},
 					ReadyResourceIDs: []string{
 						"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.RedHatOpenshift/hcpOpenShiftClusters/cluster-a",
@@ -650,7 +654,25 @@ func TestRetainStatusWithCondition(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := retainStatusWithCondition(tt.existingStatus, metav1.ConditionFalse, capacityreportv1alpha1.ReasonDataCollectionFailed, "test error", fixedTime)
+			kube := kubeinformers.NewSharedInformerFactory(nil, 0)
+			hs := hypershiftinformers.NewSharedInformerFactory(nil, 0)
+			collectionErr := errors.New("test error")
+			metricsClient := metricsfake.NewSimpleClientset()
+			metricsClient.PrependReactor("list", "pods", func(clienttesting.Action) (bool, metav1runtime.Object, error) {
+				return true, nil, collectionErr
+			})
+			c := &CapacityReportController{
+				nodeLister:      kube.Core().V1().Nodes().Lister(),
+				podLister:       kube.Core().V1().Pods().Lister(),
+				namespaceLister: kube.Core().V1().Namespaces().Lister(),
+				hcpLister:       hs.Hypershift().V1beta1().HostedControlPlanes().Lister(),
+				hcLister:        hs.Hypershift().V1beta1().HostedClusters().Lister(),
+				metricsClient:   metricsClient,
+			}
+			got, err := c.buildCapacityReportUpdate(t.Context(), tt.existingStatus, fixedTime)
+			if !errors.Is(err, collectionErr) {
+				t.Fatalf("expected metrics collection failure, got %v", err)
+			}
 			testutil.CompareWithFixture(t, got)
 		})
 	}
@@ -805,20 +827,21 @@ func newHostedControlPlane(namespace, name string, available bool) *hypershiftv1
 func TestCapacityReportCollection(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name         string
-		sizes        []string
-		ready        []bool
-		wantReadyCPU string
-		wantSizes    []string
-		duplicateIDs bool
-		associations []string
-		missingHC    bool
+		name            string
+		sizes           []string
+		ready           []bool
+		wantReadyCPU    string
+		wantSizes       []string
+		wantReadyCounts []int32
+		duplicateIDs    bool
+		associations    []string
+		missingHC       bool
 	}{
-		{name: "mixed_sizes_and_readiness", sizes: []string{"small", "small", "small", "medium", ""}, ready: []bool{true, true, false, true, true}, duplicateIDs: true, wantReadyCPU: "4", wantSizes: []string{"medium", "small"}},
-		{name: "no_ready_population", sizes: []string{"small"}, ready: []bool{false}, wantReadyCPU: "0", wantSizes: []string{"small"}},
+		{name: "mixed_sizes_and_readiness", sizes: []string{"small", "small", "small", "medium", "", "medium"}, ready: []bool{true, true, false, true, true, true}, duplicateIDs: true, wantReadyCPU: "5", wantSizes: []string{"medium", "small"}, wantReadyCounts: []int32{2, 1}},
+		{name: "no_ready_population", sizes: []string{"small"}, ready: []bool{false}, wantReadyCPU: "0", wantSizes: []string{"small"}, wantReadyCounts: []int32{0}},
 		{name: "unattributed_ready_population", sizes: []string{""}, ready: []bool{true}, wantReadyCPU: "1"},
 		{name: "empty_cluster", wantReadyCPU: "0"},
-		{name: "canonical_labels_only", sizes: []string{"default", "DEFAULT", "Small", " small", "small/large", "e2e_minimal"}, ready: []bool{true, true, true, true, true, true}, wantReadyCPU: "6", wantSizes: []string{"e2e_minimal"}},
+		{name: "canonical_labels_only", sizes: []string{"default", "DEFAULT", "Small", " small", "small/large", "e2e_minimal"}, ready: []bool{true, true, true, true, true, true}, wantReadyCPU: "6", wantSizes: []string{"e2e_minimal"}, wantReadyCounts: []int32{1}},
 		{name: "unusable_associations", sizes: []string{"small", "small", "small", "small", "small"}, ready: []bool{true, true, true, true, true}, associations: []string{"", "cluster-1", "/cluster-2", "clusters/", "clusters/cluster-4/extra"}, wantReadyCPU: "5"},
 		{name: "missing_hostedcluster", sizes: []string{"small"}, ready: []bool{true}, missingHC: true, wantReadyCPU: "1"},
 	}
@@ -897,11 +920,16 @@ func TestCapacityReportCollection(t *testing.T) {
 				t.Fatalf("ready CPU = %s, want %s", got, tt.wantReadyCPU)
 			}
 			var sizes []string
+			var readyCounts []int32
 			for _, bucket := range observed.Status.HostedControlPlanes.BySize {
 				sizes = append(sizes, bucket.Size)
+				readyCounts = append(readyCounts, bucket.ReadyCount)
 			}
 			if diff := cmp.Diff(tt.wantSizes, sizes); len(diff) > 0 {
 				t.Fatalf("size buckets (-want +got): %s", diff)
+			}
+			if diff := cmp.Diff(tt.wantReadyCounts, readyCounts); len(diff) > 0 {
+				t.Fatalf("ready counts (-want +got): %s", diff)
 			}
 			testutil.CompareWithFixture(t, report)
 		})

@@ -26,6 +26,15 @@ status:
         aro.openshift.io/swift-nic: "5"
         cpu: "5"
         memory: "0"
+    resources:
+      requested:
+        aro.openshift.io/swift-nic: "5"
+        cpu: "10"
+        memory: "0"
+      usage:
+        aro.openshift.io/swift-nic: "5"
+        cpu: "5"
+        memory: "0"
   lastReportedAt: "2026-01-01T00:00:00Z"
   requested:
     aro.openshift.io/swift-nic: "5"
