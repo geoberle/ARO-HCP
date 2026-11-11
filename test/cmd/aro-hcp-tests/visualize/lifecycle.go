@@ -201,6 +201,8 @@ func timingColor(kind string) string {
 		return "#0891b2"
 	case timing.KindDataPlaneKey:
 		return "#4d7c0f"
+	case timing.KindCapacityWait:
+		return "#a16207"
 	case timing.KindTestStep:
 		return "#94a3b8"
 	case "phase":
@@ -295,6 +297,7 @@ func summarizeLifecycle(times []TestInfo) lifecycleSummary {
 		{Name: timing.KindDeleteResourceGroup, Color: timingColor(timing.KindDeleteResourceGroup)},
 		{Name: timing.KindConvergence, Color: timingColor(timing.KindConvergence)},
 		{Name: timing.KindDataPlaneKey, Color: timingColor(timing.KindDataPlaneKey)},
+		{Name: timing.KindCapacityWait, Color: timingColor(timing.KindCapacityWait)},
 		{Name: "Full cleanup", Color: timingColor("phase")},
 	}}
 	for _, item := range times {

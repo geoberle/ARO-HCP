@@ -30,6 +30,9 @@ const (
 	NodePoolCreationTimeout     = 20 * time.Minute
 	ExternalAuthCreationTimeout = 15 * time.Minute
 	GetAdminRESTConfigTimeout   = 10 * time.Minute
+
+	// ClusterCapacityWaitTimeout bounds cumulative backoff after quota rejections.
+	ClusterCapacityWaitTimeout = 30 * time.Minute
 )
 
 // Deletion timeouts

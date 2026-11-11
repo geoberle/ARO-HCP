@@ -29,6 +29,21 @@ For serial mock execution while debugging, run `go test -race -parallel 1 ./test
 
 The [pipeline.yaml](pipeline.yaml) file in this directory contains the pipeline definition for the Frontend. It is integrated into the [topology.yaml](../topology.yaml) file and runs as part of the service cluster deployment.
 
+## E2E minimal cluster admission
+
+After field validation succeeds on cluster create, a separate capacity admission
+check uses cached inventory to limit SWIFT-enabled minimal clusters
+per region across subscriptions. `--max-e2e-minimal-swift-clusters-per-region` is optional;
+omitting it or setting it to -1 disables the limit, while 0 rejects all matching creates. Helm deployments explicitly
+set 20 through `maxE2EMinimalSwiftClustersPerRegion` in `values.yaml`.
+Matching documents count until removed, including failed and deleting clusters;
+cache lag and concurrent creates can exceed the limit. Other clusters, updates,
+and deletes are unaffected.
+
+Capacity rejection returns 400 with `AROHCPCapacityExceeded`, without persisting
+a cluster or operation. Clients retry based on that code. Ordinary validation
+errors take precedence, and preflight does not check capacity.
+
 ## Available endpoints
 
 > Note: If you need a test cluster.json file or node_pool.json for some of the below API calls, you can generate one using [utils/create.go](./utils/create.go)

@@ -387,6 +387,15 @@ func (f *Frontend) createHCPCluster(writer http.ResponseWriter, request *http.Re
 	if err := coreapi.CloudErrorFromFieldErrors(validationErrs); err != nil {
 		return utils.TrackError(err)
 	}
+	if f.maxE2EMinimalSwiftClustersPerRegion != nil {
+		clusters, err := f.clusterLister.List(ctx)
+		if err != nil {
+			return utils.TrackError(fmt.Errorf("cannot list clusters for capacity admission: %w", err))
+		}
+		if err := admission.AdmitClusterCapacity(clusters, *f.maxE2EMinimalSwiftClustersPerRegion, newInternalCluster); err != nil {
+			return utils.TrackError(err)
+		}
+	}
 
 	// we must validate using user provided .Identity.UserAssignedIdentities because that is the intent expressed by the user to allow
 	// us to use these identities. The information contained in those key is not trusted to be accurate, so we clear this field and set to

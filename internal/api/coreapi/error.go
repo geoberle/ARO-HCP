@@ -48,6 +48,7 @@ const (
 	CloudErrorCodeInvalidResourceGroupName = "InvalidResourceGroupName"
 	CloudErrorCodeLockContention           = "LockContention"
 	CloudErrorCodeCapacityHeavyUse         = "AROHCPCapacityHeavyUse"
+	CloudErrorCodeCapacityExceeded         = "AROHCPCapacityExceeded"
 	CloudErrorCodeDeadlineExceeded         = "DeadlineExceeded"
 )
 

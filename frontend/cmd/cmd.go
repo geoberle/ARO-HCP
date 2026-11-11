@@ -70,6 +70,7 @@ type FrontendOpts struct {
 	cosmosName string
 	cosmosURL  string
 
+	maxE2EMinimalSwiftClustersPerRegion     int
 	azureClusterScopedIdentitiesRoleSetName string
 
 	exitOnPanic  bool
@@ -106,6 +107,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.Flags().StringVar(&opts.cosmosURL, "cosmos-url", os.Getenv("DB_URL"), "Cosmos database URL")
 	rootCmd.Flags().StringVar(&opts.location, "location", os.Getenv("LOCATION"), "Azure location")
 	rootCmd.Flags().IntVar(&opts.port, "port", 8443, "port to listen on")
+	rootCmd.Flags().IntVar(&opts.maxE2EMinimalSwiftClustersPerRegion, "max-e2e-minimal-swift-clusters-per-region", -1, "Regional limit for SWIFT-enabled E2E minimal clusters; -1 for unlimited, 0 rejects all matching creates")
 	rootCmd.Flags().IntVar(&opts.metricsPort, "metrics-port", 8081, "port to serve metrics on")
 
 	rootCmd.Flags().StringVar(&opts.clustersServiceURL, "clusters-service-url", "https://api.openshift.com", "URL of the OCM API gateway.")
@@ -131,13 +133,18 @@ func NewRootCmd() *cobra.Command {
 
 func NewFrontendOpts() *FrontendOpts {
 	return &FrontendOpts{
-		exitOnPanic: true,
+		exitOnPanic:                         true,
+		maxE2EMinimalSwiftClustersPerRegion: -1,
 	}
 }
 
 func (opts *FrontendOpts) Validate() error {
 	if len(opts.location) == 0 {
 		return utils.TrackError(fmt.Errorf("--location is required"))
+	}
+
+	if opts.maxE2EMinimalSwiftClustersPerRegion < -1 {
+		return utils.TrackError(fmt.Errorf("--max-e2e-minimal-swift-clusters-per-region must be -1 or non-negative"))
 	}
 
 	if opts.logVerbosity < 0 {
@@ -261,6 +268,11 @@ func (opts *FrontendOpts) Run() error {
 
 	clusterScopedIdentitiesConfig := internalazure.NewClusterScopedIdentitiesConfig(internalazure.RoleDefinitionConfigSetName(opts.azureClusterScopedIdentitiesRoleSetName))
 
+	var maxE2EMinimalSwiftClustersPerRegion *int
+	if opts.maxE2EMinimalSwiftClustersPerRegion >= 0 {
+		maxE2EMinimalSwiftClustersPerRegion = &opts.maxE2EMinimalSwiftClustersPerRegion
+	}
+
 	f := frontend.NewFrontend(
 		logger, listener, metricsListener,
 		legacyregistry.Registerer(), legacyregistry.DefaultGatherer,
@@ -268,6 +280,7 @@ func (opts *FrontendOpts) Run() error {
 		coreinformers.NewFrontendInformers(ctx, resourcesDBClient.ResourcesGlobalListers(), resourcesDBClient),
 		csClient, auditClient, opts.location,
 		clusterScopedIdentitiesConfig,
+		maxE2EMinimalSwiftClustersPerRegion,
 	)
 
 	runErrCh := make(chan error, 1)

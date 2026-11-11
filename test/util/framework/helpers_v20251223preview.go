@@ -504,23 +504,23 @@ func CreateHCPClusterAndWait20251223(
 		}
 		recorder.Record(kind, fmt.Sprintf(format, resourceGroupName, hcpClusterName), startTime, time.Now(), operationErr)
 	}()
-	if timeout > 0*time.Second {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timeout '%f' minutes exceeded during CreateHCPCluster20251223AndWait for cluster %s in resource group %s", timeout.Minutes(), hcpClusterName, resourceGroupName))
-		defer cancel()
-	}
-
+	budget := newOperationBudget(timeout)
 	logger.Info("Starting HCP cluster creation (v20251223preview)", "clusterName", hcpClusterName, "resourceGroup", resourceGroupName, "version", cluster.Properties.Version.ID, "channelGroup", cluster.Properties.Version.ChannelGroup)
 	createCtx, createAttempts := withRequestAttemptTracker(ctx)
-	poller, err := hcpClient.BeginCreateOrUpdate(createCtx, resourceGroupName, hcpClusterName, cluster, nil)
-	if err != nil {
-		poller, err = resumeInFlightHCPClusterCreate20251223(ctx, hcpClient, resourceGroupName, hcpClusterName, createAttempts, err)
-	}
+	poller, err := waitForCapacity(createCtx, budget, ClusterCapacityWaitTimeout, isCapacityRejection, func(ctx context.Context) (*runtime.Poller[hcpsdk20251223preview.HcpOpenShiftClustersClientCreateOrUpdateResponse], error) {
+		poller, err := hcpClient.BeginCreateOrUpdate(ctx, resourceGroupName, hcpClusterName, cluster, nil)
+		if err != nil {
+			return resumeInFlightHCPClusterCreate20251223(ctx, hcpClient, resourceGroupName, hcpClusterName, createAttempts, err)
+		}
+		return poller, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed starting cluster creation %q in resourcegroup=%q: %w", hcpClusterName, resourceGroupName, err)
 	}
 
 	if timeout > 0*time.Second {
+		ctx, cancel := budget.context(ctx)
+		defer cancel()
 		operationResult, err := poller.PollUntilDone(ctx, &runtime.PollUntilDoneOptions{
 			Frequency: StandardPollInterval,
 		})
@@ -757,11 +757,9 @@ func (tc *perItOrDescribeTestContext) CreateHCPClusterFromParam20251223(
 	imageDigestMirrors []*hcpsdk20251223preview.ImageDigestMirror,
 	timeout time.Duration,
 ) (operationErr error) {
-	if timeout > 0*time.Second {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timeout '%f' minutes exceeded during CreateHCPCluster20251223FromParam for cluster %s in resource group %s", timeout.Minutes(), parameters.ClusterName, resourceGroupName))
-		defer cancel()
-	}
+	budget := newOperationBudget(timeout)
+	setupCtx, cancelSetup := budget.context(ctx)
+	defer cancelSetup()
 	clusterName := parameters.ClusterName
 
 	cluster, err := BuildHCPClusterFromParams20251223(parameters, tc.Location(), imageDigestMirrors)
@@ -769,18 +767,21 @@ func (tc *perItOrDescribeTestContext) CreateHCPClusterFromParam20251223(
 		return fmt.Errorf("failed to build HCP cluster %s: %w", clusterName, err)
 	}
 
+	client := tc.Get20251223ClientFactoryOrDie(setupCtx).NewHcpOpenShiftClustersClient()
+	remaining, err := budget.remaining(ctx)
+	if err != nil {
+		return fmt.Errorf("failed preparing HCP cluster %s: %w", clusterName, err)
+	}
+
 	if _, err := CreateHCPClusterAndWait20251223(
 		ctx,
 		logger,
-		tc.Get20251223ClientFactoryOrDie(ctx).NewHcpOpenShiftClustersClient(),
+		client,
 		resourceGroupName,
 		clusterName,
 		cluster,
-		timeout,
+		remaining,
 	); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("failed to create HCP cluster %s, caused by: %w, error: %w", clusterName, context.Cause(ctx), err)
-		}
 		return fmt.Errorf("failed to create HCP cluster %s: %w", clusterName, err)
 	}
 	return nil

@@ -78,6 +78,13 @@ mock in scope. It also keeps the cost of admission predictable — every
 lookup happens once, before validation, instead of being scattered through
 the admit functions.
 
+`AdmitClusterCapacity` is the one exception to loading through the context
+constructor. It runs only on a real cluster create, never on update or
+preflight, and its rejection is not a field error, so it takes the cached
+cluster list and the limit as plain arguments from the create handler. It is
+still a pure function over plain data. Move its inputs into the context only
+when a second check needs them.
+
 ## The frontend must never reach the management cluster; mirror through ServiceProviderCluster
 
 The frontend (and therefore admission, which the frontend drives) must

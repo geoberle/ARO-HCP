@@ -90,9 +90,12 @@ type Frontend struct {
 	// definition config set it is built from varies per environment, so it is supplied by the
 	// caller rather than chosen here.
 	clusterScopedIdentitiesConfig *azure.ClusterScopedIdentitiesConfig
+	// maxE2EMinimalSwiftClustersPerRegion limits SWIFT-enabled minimal clusters per region; nil disables the limit.
+	maxE2EMinimalSwiftClustersPerRegion *int
 }
 
 // NewFrontend constructs an instance without changing process-wide panic policy.
+// A nil maxE2EMinimalSwiftClustersPerRegion disables the capacity limit.
 func NewFrontend(
 	logger logr.Logger,
 	listener net.Listener,
@@ -105,6 +108,7 @@ func NewFrontend(
 	auditClient audit.Client,
 	azureLocation string,
 	clusterScopedIdentitiesConfig *azure.ClusterScopedIdentitiesConfig,
+	maxE2EMinimalSwiftClustersPerRegion *int,
 ) *Frontend {
 	// zero side-effect registration path
 	apiRegistry := coreapi.NewAPIRegistry()
@@ -135,6 +139,9 @@ func NewFrontend(
 		resourcesDBClient:             resourcesDBClient,
 		informers:                     informers,
 		clusterScopedIdentitiesConfig: clusterScopedIdentitiesConfig,
+
+		maxE2EMinimalSwiftClustersPerRegion: maxE2EMinimalSwiftClustersPerRegion,
+
 		healthGauge: promauto.With(registerer).NewGauge(
 			prometheus.GaugeOpts{
 				Name: healthGaugeName,

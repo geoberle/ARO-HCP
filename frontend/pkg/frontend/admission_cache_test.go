@@ -16,6 +16,7 @@ package frontend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/operation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	azcorearm "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 
@@ -102,6 +104,87 @@ func TestClusterCreateAdmissionCachedInventory(t *testing.T) {
 	_ = admission.AdmitCluster(t.Context(), ctx, operation.Operation{Type: operation.Create}, cluster.DeepCopy(), nil)
 	require.ElementsMatch(t, beforeClusters, ctx.SubscriptionClusters, "admission must not mutate cached clusters")
 	require.Equal(t, beforePools, ctx.SubscriptionNodePools, "admission must not mutate cached node pools")
+}
+
+func TestClusterCreateMinimalCapacityCachedInventory(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid version %t", invalid), func(t *testing.T) {
+			f := NewTestFrontend(t)
+			db := f.resourcesDBClient
+			f.resourcesDBClient = noInventoryListsDB{db}
+			cluster := coreapitesting.MinimumValidClusterTestCase()
+			cluster.Tags = map[string]string{metadataapi.TagClusterSizeOverride: string(coreapi.MinimalControlPlanePodSizing)}
+			if invalid {
+				cluster.CustomerProperties.Version.ID = "invalid"
+			}
+			// Only the cache contains these documents, all in a different
+			// subscription. The regional quota must not use live DB inventory.
+			var inventory []*coreapi.Cluster
+			for i := range 20 {
+				stored := coreapitesting.MinimumValidClusterTestCase()
+				stored.ID = metadataapi.Must(azcorearm.ParseResourceID(fmt.Sprintf(
+					"/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/other/providers/Microsoft.RedHatOpenShift/hcpOpenShiftClusters/cluster-%d", i)))
+				stored.SetResourceID(stored.ID)
+				stored.SetPartitionKey(stored.ID.SubscriptionID)
+				stored.ServiceProviderProperties.ExperimentalFeatures.ControlPlanePodSizing = coreapi.MinimalControlPlanePodSizing
+				inventory = append(inventory, stored)
+			}
+			f.clusterLister = corelisters.NewClusterLister(newTestClusterInformer(t, inventory...).GetIndexer())
+			f.maxE2EMinimalSwiftClustersPerRegion = ptr.To(20)
+			subscription := newTestSubscription(cluster.ID.SubscriptionID, coreapi.SubscriptionStateRegistered, &coreapi.SubscriptionProperties{
+				RegisteredFeatures: &[]coreapi.Feature{{Name: ptr.To(metadataapi.FeatureExperimentalReleaseFeatures), State: ptr.To("Registered")}},
+			})
+			version, ok := f.apiRegistry.Lookup(string(metadataapi.APIVersionV20251223Preview))
+			require.True(t, ok)
+			body, err := coreapi.MarshalJSON(version.NewCluster(cluster))
+			require.NoError(t, err)
+			ctx := ContextWithVersion(t.Context(), version)
+			ctx = ContextWithSubscription(ctx, subscription)
+			ctx = ContextWithCorrelationData(ctx, &coreapi.CorrelationData{})
+			ctx = ContextWithSystemData(ctx, cluster.SystemData)
+			ctx = ContextWithBody(ctx, body)
+			ctx = utils.ContextWithResourceID(ctx, cluster.ID)
+			request := httptest.NewRequest(http.MethodPut, cluster.ID.String(), nil).WithContext(ctx)
+			request.Header.Set(coreapi.HeaderNameIdentityURL, coreapitesting.TestManagedIdentitiesDataPlaneIdentityURL)
+			recorder := httptest.NewRecorder()
+			errorutils.ReportError(f.createHCPCluster)(recorder, request)
+			var response coreapi.CloudError
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			require.NotNil(t, response.CloudErrorBody)
+			if invalid {
+				require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+				require.Equal(t, coreapi.CloudErrorCodeMultipleErrorsOccurred, response.Code)
+				require.NotContains(t, recorder.Body.String(), coreapi.CloudErrorCodeCapacityExceeded)
+			} else {
+				require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+				require.Equal(t, coreapi.CloudErrorCodeCapacityExceeded, response.Code)
+			}
+			var resource map[string]any
+			require.NoError(t, json.Unmarshal(body, &resource))
+			resource["apiVersion"] = version.String()
+			resource["name"] = cluster.ID.Name
+			resource["type"] = coreapi.ClusterResourceType.String()
+			preflightBody, err := json.Marshal(map[string]any{"resources": []any{resource}})
+			require.NoError(t, err)
+			preflightRequest := httptest.NewRequest(http.MethodPost, "/preflight", nil).WithContext(ContextWithBody(ctx, preflightBody))
+			preflightRequest.SetPathValue(PathSegmentSubscriptionID, cluster.ID.SubscriptionID)
+			preflightRequest.SetPathValue(PathSegmentResourceGroupName, cluster.ID.ResourceGroupName)
+			preflightRecorder := httptest.NewRecorder()
+			errorutils.ReportError(f.ArmDeploymentPreflight)(preflightRecorder, preflightRequest)
+			require.Equal(t, http.StatusOK, preflightRecorder.Code, preflightRecorder.Body.String())
+			var preflightResponse coreapi.DeploymentPreflightResponse
+			require.NoError(t, json.Unmarshal(preflightRecorder.Body.Bytes(), &preflightResponse))
+			// Preflight validates the request only; capacity is checked on create.
+			require.NotContains(t, preflightRecorder.Body.String(), coreapi.CloudErrorCodeCapacityExceeded)
+			if invalid {
+				require.Equal(t, coreapi.DeploymentPreflightStatusFailed, preflightResponse.Status)
+			} else {
+				require.Equal(t, coreapi.DeploymentPreflightStatusSucceeded, preflightResponse.Status)
+			}
+			_, err = db.HCPClusters(cluster.ID.SubscriptionID, cluster.ID.ResourceGroupName).Get(t.Context(), cluster.ID.Name)
+			require.True(t, cosmosstorageutils.IsNotFoundError(err), "rejected create must not persist a cluster: %v", err)
+		})
+	}
 }
 
 func TestAdmissionProviderCache(t *testing.T) {
