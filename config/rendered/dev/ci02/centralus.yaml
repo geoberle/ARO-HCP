@@ -15,6 +15,22 @@ acr:
       days: 90
       enabled: true
     zoneRedundantMode: Disabled
+  ocpControlPlaneEmbargo:
+    diagnosticSettings:
+      enabled: false
+      logAnalyticsWorkspace:
+        name: arohcpocpcontrolplaneembargoci02-diag
+        retentionInDays: 90
+        sku: PerGB2018
+    name: arohcpocpcontrolplaneembargodev
+    overviewDashboard:
+      enabled: false
+      name: arohcpocpcontrolplaneembargoci02-overview
+    replicationState: true
+    untaggedImagesRetention:
+      days: 90
+      enabled: true
+    zoneRedundantMode: Disabled
   svc:
     name: arohcpsvcdev
     replicationState: true
